@@ -1,0 +1,181 @@
+version: '3.8'
+
+# ═══════════════════════════════════════════════════════════════
+# DISSMODEL PLATFORM - Docker Compose (Phase 1 MVP)
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─────────────────────────────────────────────────────────────
+  # FRONTEND: JupyterLab Environment
+  # ─────────────────────────────────────────────────────────────
+  jupyter:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: dissmodel-jupyter
+    restart: unless-stopped
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    volumes:
+      - ./workspace:/home/jovyan/work
+      - ./data/inputs:/data/inputs:ro
+      - ./data/outputs:/data/outputs
+      - ./examples:/examples:ro
+    environment:
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-inpe_admin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - API_ENDPOINT=http://api:8000
+      - DISSMODEL_CLOUD=${DISSMODEL_CLOUD:-false}
+      - JUPYTER_ENABLE_LAB=yes
+    env_file:
+      - .env
+    networks:
+      - dissmodel-net
+    depends_on:
+      #minio:
+      #  condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/api"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────
+  # BACKEND: API Gateway (FastAPI)
+  # ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: dissmodel-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./data/outputs:/data/outputs
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-inpe_admin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
+      - WORKER_QUEUE=${WORKER_QUEUE:-dissmodel_jobs}
+      - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
+    env_file:
+      - .env
+    networks:
+      - dissmodel-net
+    depends_on:
+      - redis
+      - minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────
+  # BACKEND: Workers (Scalable)
+  # ─────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./data/inputs:/data/inputs:ro
+      - ./data/outputs:/data/outputs
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-inpe_admin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
+      - WORKER_QUEUE=${WORKER_QUEUE:-dissmodel_jobs}
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-4}
+      - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
+      - SAL_ANIMATE=0
+    env_file:
+      - .env
+    networks:
+      - dissmodel-net
+    depends_on:
+      - redis
+      - minio
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  # ─────────────────────────────────────────────────────────────
+  # INFRA: MinIO Storage (S3-compatible)
+  # ─────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:RELEASE.2024-01-01T16-36-33Z
+    container_name: dissmodel-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-inpe_admin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
+    env_file:
+      - .env
+    networks:
+      - dissmodel-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────
+  # INFRA: Redis Queue
+  # ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: dissmodel-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - dissmodel-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ───────────────────────────────────────────────────────────────
+# Networks
+# ───────────────────────────────────────────────────────────────
+networks:
+  dissmodel-net:
+    driver: bridge
+    name: dissmodel-network
+
+# ───────────────────────────────────────────────────────────────
+# Volumes (named)
+# ───────────────────────────────────────────────────────────────
+volumes:
+  minio-data:
+    name: dissmodel-minio-data
+  redis-data:
+    name: dissmodel-redis-data

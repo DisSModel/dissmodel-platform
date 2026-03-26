@@ -1,26 +1,31 @@
-FROM jupyter/scipy-notebook:python-3.11
+FROM jupyter/base-notebook:python-3.11
 
 USER root
 
-# Apenas dependências mínimas (sem GDAL)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl libspatialindex-dev \
+    curl \
+    libspatialindex-dev \
+    gdal-bin \
+    libgdal-dev \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
+# Diretórios
+RUN mkdir -p /data/inputs /data/outputs /examples \
+    && chown -R jovyan:users /data /examples
+
+COPY jupyter_config.py /etc/jupyter/
+
 USER jovyan
 
-RUN pip install --upgrade pip
-
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt 
 
-# Extensões para mapas interativos
-RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager jupyter-leaflet --no-build && \
-    jupyter lab build
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r /tmp/requirements.txt
 
-RUN mkdir -p /home/jovyan/work /data/inputs /data/outputs /examples
-COPY jupyter_config.py /etc/jupyter/
+RUN pip uninstall -y numba llvmlite || true
+
+RUN mkdir -p /home/jovyan/work
 
 WORKDIR /home/jovyan/work
 
