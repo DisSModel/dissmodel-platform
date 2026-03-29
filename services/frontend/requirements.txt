@@ -1,5 +1,5 @@
 # DisSModel (já traz numpy, geopandas, shapely, etc.)
-dissmodel>=0.3.0,<0.4.0
+#dissmodel>=0.3.0,<0.4.0
 
 # Cloud storage
 minio>=7.2.0,<8.0.0
