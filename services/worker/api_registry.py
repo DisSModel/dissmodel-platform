@@ -14,32 +14,44 @@ MODELS_DIR   = CONFIGS_PATH / "models"
 
 # ── Git sync ──────────────────────────────────────────────────────────────────
 
-def sync_configs() -> None:
+def sync_configs() -> str:
     """
-    Pull latest changes from the configs repo.
-    Called by APScheduler every 15 minutes and by POST /admin/sync.
-    Clears the spec cache after a successful pull.
+    Tenta sincronizar via git se o repositório existir.
+    Caso contrário, apenas limpa o cache para desenvolvimento local.
     """
     if not CONFIGS_PATH.exists():
-        raise RuntimeError(
-            f"Configs path '{CONFIGS_PATH}' does not exist. "
-            f"Is the configs-sync container running?"
+        return f"Configs path '{CONFIGS_PATH}' not found. Skipping sync."
+
+    # 1. Verifica se a pasta montada é um repositório Git
+    if not (CONFIGS_PATH / ".git").exists():
+        # Em modo desenvolvimento local (sem git), apenas limpamos o cache
+        # para que novos arquivos .toml sejam lidos corretamente.
+        load_model_spec.cache_clear()
+        return "Local development mode: cache cleared (no git repo found)"
+
+    # 2. Tenta rodar o git pull (dentro de um try/except caso o binário 'git' não exista)
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(CONFIGS_PATH), "pull", "--ff-only"],
+            capture_output=True,
+            text=True,
+            check=False # Não levanta exceção automaticamente se o git retornar erro
         )
 
-    result = subprocess.run(
-        ["git", "-C", str(CONFIGS_PATH), "pull", "--ff-only"],
-        capture_output=True,
-        text=True,
-    )
+        if result.returncode != 0:
+            # Se o git falhar por outro motivo (ex: conflito), logamos mas não travamos a API
+            return f"Git pull failed (is it a valid repo?): {result.stderr.strip()}"
 
-    if result.returncode != 0:
-        raise RuntimeError(f"git pull failed: {result.stderr.strip()}")
+        # Invalida o cache se houve mudança real no repositório
+        if "Already up to date." not in result.stdout:
+            load_model_spec.cache_clear()
 
-    # Invalidate cache only if something actually changed
-    if "Already up to date." not in result.stdout:
+        return result.stdout.strip()
+
+    except FileNotFoundError:
+        # Caso o binário 'git' não esteja instalado no container
         load_model_spec.cache_clear()
-
-    return result.stdout.strip()
+        return "Git command not found in container: using local files and clearing cache."
 
 
 def start_sync_scheduler(interval_seconds: int = 900) -> BackgroundScheduler:

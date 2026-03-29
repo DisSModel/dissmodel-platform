@@ -52,6 +52,7 @@ services:
     volumes:
       - ./data/outputs:/data/outputs
       - ./configs:/configs:ro           # ← pasta local em vez de configs-data
+      - ./services/worker:/app/worker   # ← adiciona essa linha
     environment:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}

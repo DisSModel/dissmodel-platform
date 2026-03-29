@@ -53,30 +53,28 @@ class FloodVectorExecutor(ModelExecutor):
 
     # ── Load ──────────────────────────────────────────────────────────────────
 
+    # services/worker/executors/flood_vector.py
+
     def load(self, record: ExperimentRecord) -> gpd.GeoDataFrame:
-        """
-        Fetch input from MinIO into memory and read with GeoPandas.
-        Mirrors exactly what the researcher did in Jupyter.
-        """
         uri = record.source.uri
 
         if uri.startswith("s3://"):
-            # Parse s3://bucket/key and stream into BytesIO — no temp file needed
-            parts  = uri[5:].split("/", 1)
-            bucket, key = parts[0], parts[1]
-            obj    = minio_client.get_object(bucket, key)
-            data   = io.BytesIO(obj.read())
+            parts        = uri[5:].split("/", 1)
+            bucket, key  = parts[0], parts[1]
+
+            # Mirror exactly what worked in Jupyter
+            obj  = minio_client.get_object(bucket, key)
+            data = io.BytesIO(obj.read())
+
             record.source.checksum = sha256_file_bytes(data.getvalue())
-            data.seek(0)
+            data.seek(0)   # rewind after checksum read
+
             gdf = gpd.read_file(data)
 
         else:
-            # Local path — development / testing outside Docker
-            local_path = uri
-            record.source.checksum = sha256_file(local_path)
-            gdf = gpd.read_file(local_path)
+            record.source.checksum = sha256_file(uri)
+            gdf = gpd.read_file(uri)
 
-        # Apply column_map if dataset uses non-canonical names
         if record.column_map:
             gdf = gdf.rename(columns={v: k for k, v in record.column_map.items()})
 
