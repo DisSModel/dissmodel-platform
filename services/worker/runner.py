@@ -6,8 +6,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from worker.registry import ExecutorRegistry
-from worker.schemas import ExperimentRecord, JobRequest, InlineJobRequest
+from dissmodel.executor.registry import ExecutorRegistry
+from dissmodel.executor.schemas import ExperimentRecord, JobRequest, InlineJobRequest
 
 CONFIGS_PATH = Path("/configs")
 

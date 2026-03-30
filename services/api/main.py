@@ -17,7 +17,7 @@ from minio import Minio
 
 from worker.api_registry import list_models, load_model_spec, start_sync_scheduler, sync_configs
 from worker.runner import build_record, build_record_inline, reproduce_experiment, run_experiment
-from worker.schemas import ExperimentRecord, InlineJobRequest, JobRequest, JobResponse
+from dissmodel.executor.schemas import ExperimentRecord, InlineJobRequest, JobRequest, JobResponse
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 

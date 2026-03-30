@@ -1,6 +1,12 @@
 version: '3.8'
 
 services:
+  # configs-sync comentado — usa pasta local durante desenvolvimento
+  # Reativar quando dissmodel-configs virar repo git
+  # configs-sync:
+  #   image: alpine/git
+  #   ...
+
   jupyter:
     build:
       context: ./services/frontend
@@ -15,11 +21,10 @@ services:
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
       - ./examples:/examples:ro
-      - ./configs:/configs:ro
-      - pip-cache:/home/jovyan/.cache/pip  # Cache compartilhado (path p/ jovyan)
+      - ./configs:/configs:ro           # ← configs local visível no Jupyter
     command: >
       bash -c "
-      python3 -c 'import dissmodel' &> /dev/null || pip install -e /opt/dissmodel &&
+      pip show dissmodel || pip install -e /opt/dissmodel &&
       start-notebook.sh --NotebookApp.token=''
       "
     environment:
@@ -31,7 +36,6 @@ services:
       - API_ENDPOINT=http://api:8000
       - DISSMODEL_CLOUD=${DISSMODEL_CLOUD:-false}
       - JUPYTER_ENABLE_LAB=yes
-      - PYTHONPATH=/home/jovyan/work:/opt/dissmodel
     env_file:
       - .env
     networks:
@@ -50,8 +54,7 @@ services:
       - ./configs:/configs:ro          
       - ./services/worker:/app/worker   
       - ./services/api:/app
-      - ../dissmodel:/opt/dissmodel
-      - pip-cache:/home/appuser/.cache/pip # Cache compartilhado (path p/ appuser)
+      - ../dissmodel:/opt/dissmodel     # <-- ESSENCIAL: A biblioteca motor
     environment:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -63,7 +66,7 @@ services:
       - API_KEYS=${API_KEYS:-dev-key}
       - CONFIGS_PATH=/configs
       - CONFIGS_SYNC_INTERVAL=${CONFIGS_SYNC_INTERVAL:-900}
-      - PYTHONPATH=/app:/opt/dissmodel
+      - PYTHONPATH=/app:/opt/dissmodel  # <-- Adicione /opt/dissmodel aqui
     env_file:
       - .env
     networks:
@@ -81,15 +84,12 @@ services:
     build:
       context: ./services/worker
       dockerfile: Dockerfile
-    container_name: dissmodel-worker
     restart: unless-stopped
     volumes:
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
       - ../dissmodel:/opt/dissmodel
-      - ./configs:/configs:ro
-      - ./services/worker:/app/worker
-      - pip-cache:/home/appuser/.cache/pip # Cache compartilhado (path p/ appuser)
+      - ./configs:/configs:ro           # ← pasta local em vez de configs-data
     environment:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -101,7 +101,6 @@ services:
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
       - SAL_ANIMATE=0
       - CONFIGS_PATH=/configs
-      - PYTHONPATH=/app:/opt/dissmodel
     env_file:
       - .env
     networks:
@@ -169,5 +168,4 @@ volumes:
     name: dissmodel-minio-data
   redis-data:
     name: dissmodel-redis-data
-  pip-cache:
-    name: dissmodel-pip-cache
+  # configs-data removido — usando bind mount local

@@ -7,7 +7,7 @@ import time
 
 import redis
 
-from worker.schemas import ExperimentRecord
+from dissmodel.executor.schemas import ExperimentRecord
 from worker.runner import run_experiment
 from worker.storage import ensure_buckets
 
