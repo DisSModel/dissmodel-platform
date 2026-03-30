@@ -1,35 +1,12 @@
 version: '3.8'
 
-# ═══════════════════════════════════════════════════════════════
-# DISSMODEL PLATFORM - Docker Compose (Phase 1 MVP)
-# ═══════════════════════════════════════════════════════════════
-
 services:
-  # ── NOVO: clona e mantém sincronizado o repo de configs ──────────────────
-  configs-sync:
-    image: alpine/git
-    container_name: dissmodel-configs-sync
-    restart: unless-stopped
-    volumes:
-      - configs-data:/configs
-    environment:
-      - CONFIGS_REPO=${CONFIGS_REPO:-https://github.com/lambdageo/dissmodel-configs}
-      - SYNC_INTERVAL=${CONFIGS_SYNC_INTERVAL:-900}   # 15 min
-    entrypoint: |
-      sh -c '
-        if [ ! -d /configs/.git ]; then
-          git clone $$CONFIGS_REPO /configs
-        fi
-        while true; do
-          git -C /configs pull --ff-only
-          sleep $$SYNC_INTERVAL
-        done
-      '
-    networks:
-      - dissmodel-net
-  # ─────────────────────────────────────────────────────────────
-  # FRONTEND: JupyterLab Environment
-  # ─────────────────────────────────────────────────────────────
+  # configs-sync comentado — usa pasta local durante desenvolvimento
+  # Reativar quando dissmodel-configs virar repo git
+  # configs-sync:
+  #   image: alpine/git
+  #   ...
+
   jupyter:
     build:
       context: ./services/frontend
@@ -40,10 +17,11 @@ services:
       - "${JUPYTER_PORT:-8888}:8888"
     volumes:
       - ./workspace:/home/jovyan/work
-      - ../dissmodel:/opt/dissmodel   
+      - ../dissmodel:/opt/dissmodel
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
       - ./examples:/examples:ro
+      - ./configs:/configs:ro           # ← configs local visível no Jupyter
     command: >
       bash -c "
       pip show dissmodel || pip install -e /opt/dissmodel &&
@@ -62,20 +40,7 @@ services:
       - .env
     networks:
       - dissmodel-net
-    #depends_on:
-      #minio:
-      #  condition: service_healthy
-      #redis:
-      #  condition: service_started
-    #healthcheck:
-    #  test: ["CMD", "curl", "-f", "http://localhost:8888/api"]
-    #  interval: 30s
-    #  timeout: 10s
-    #  retries: 3
 
-  # ─────────────────────────────────────────────────────────────
-  # BACKEND: API Gateway (FastAPI)
-  # ─────────────────────────────────────────────────────────────
   api:
     build:
       context: ./services/api
@@ -86,6 +51,9 @@ services:
       - "${API_PORT:-8000}:8000"
     volumes:
       - ./data/outputs:/data/outputs
+      - ./configs:/configs:ro          
+      - ./services/worker:/app/worker   
+      - ./services/api:/app
     environment:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -94,8 +62,9 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
       - WORKER_QUEUE=${WORKER_QUEUE:-dissmodel_jobs}
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
-      - API_KEYS=${API_KEYS:-dev-key}   # ← NOVO: autenticação
+      - API_KEYS=${API_KEYS:-dev-key}
       - CONFIGS_PATH=/configs
+      - CONFIGS_SYNC_INTERVAL=${CONFIGS_SYNC_INTERVAL:-900}
     env_file:
       - .env
     networks:
@@ -109,9 +78,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # ─────────────────────────────────────────────────────────────
-  # BACKEND: Workers (Scalable)
-  # ─────────────────────────────────────────────────────────────
   worker:
     build:
       context: ./services/worker
@@ -121,7 +87,7 @@ services:
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
       - ../dissmodel:/opt/dissmodel
-      - configs-data:/configs:ro        # ← NOVO: worker também lê configs
+      - ./configs:/configs:ro           # ← pasta local em vez de configs-data
     environment:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -132,6 +98,7 @@ services:
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-4}
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
       - SAL_ANIMATE=0
+      - CONFIGS_PATH=/configs
     env_file:
       - .env
     networks:
@@ -149,9 +116,6 @@ services:
           cpus: '1'
           memory: 2G
 
-  # ─────────────────────────────────────────────────────────────
-  # INFRA: MinIO Storage (S3-compatible)
-  # ─────────────────────────────────────────────────────────────
   minio:
     image: minio/minio:RELEASE.2024-01-01T16-36-33Z
     container_name: dissmodel-minio
@@ -175,9 +139,6 @@ services:
       timeout: 20s
       retries: 3
 
-  # ─────────────────────────────────────────────────────────────
-  # INFRA: Redis Queue
-  # ─────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: dissmodel-redis
@@ -195,21 +156,14 @@ services:
       timeout: 5s
       retries: 5
 
-# ───────────────────────────────────────────────────────────────
-# Networks
-# ───────────────────────────────────────────────────────────────
 networks:
   dissmodel-net:
     driver: bridge
     name: dissmodel-network
 
-# ───────────────────────────────────────────────────────────────
-# Volumes (named)
-# ───────────────────────────────────────────────────────────────
 volumes:
   minio-data:
     name: dissmodel-minio-data
   redis-data:
     name: dissmodel-redis-data
-  configs-data:                         # ← NOVO: volume compartilhado
-    name: dissmodel-configs-data
+  # configs-data removido — usando bind mount local
