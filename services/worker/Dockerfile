@@ -19,9 +19,13 @@ RUN pip install --upgrade pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy as a package so `from worker.schemas import ...` works
+COPY . ./worker/
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-CMD ["python", "worker.py"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["python", "-m", "worker.worker"]

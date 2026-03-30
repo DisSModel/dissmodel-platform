@@ -5,6 +5,28 @@ version: '3.8'
 # ═══════════════════════════════════════════════════════════════
 
 services:
+  # ── NOVO: clona e mantém sincronizado o repo de configs ──────────────────
+  configs-sync:
+    image: alpine/git
+    container_name: dissmodel-configs-sync
+    restart: unless-stopped
+    volumes:
+      - configs-data:/configs
+    environment:
+      - CONFIGS_REPO=${CONFIGS_REPO:-https://github.com/lambdageo/dissmodel-configs}
+      - SYNC_INTERVAL=${CONFIGS_SYNC_INTERVAL:-900}   # 15 min
+    entrypoint: |
+      sh -c '
+        if [ ! -d /configs/.git ]; then
+          git clone $$CONFIGS_REPO /configs
+        fi
+        while true; do
+          git -C /configs pull --ff-only
+          sleep $$SYNC_INTERVAL
+        done
+      '
+    networks:
+      - dissmodel-net
   # ─────────────────────────────────────────────────────────────
   # FRONTEND: JupyterLab Environment
   # ─────────────────────────────────────────────────────────────
@@ -18,9 +40,15 @@ services:
       - "${JUPYTER_PORT:-8888}:8888"
     volumes:
       - ./workspace:/home/jovyan/work
+      - ../dissmodel:/opt/dissmodel   
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
       - ./examples:/examples:ro
+    command: >
+      bash -c "
+      pip show dissmodel || pip install -e /opt/dissmodel &&
+      start-notebook.sh --NotebookApp.token=''
+      "
     environment:
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-inpe_admin}
@@ -34,16 +62,16 @@ services:
       - .env
     networks:
       - dissmodel-net
-    depends_on:
-      minio:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/api"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    #depends_on:
+      #minio:
+      #  condition: service_healthy
+      #redis:
+      #  condition: service_started
+    #healthcheck:
+    #  test: ["CMD", "curl", "-f", "http://localhost:8888/api"]
+    #  interval: 30s
+    #  timeout: 10s
+    #  retries: 3
 
   # ─────────────────────────────────────────────────────────────
   # BACKEND: API Gateway (FastAPI)
@@ -66,6 +94,8 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
       - WORKER_QUEUE=${WORKER_QUEUE:-dissmodel_jobs}
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
+      - API_KEYS=${API_KEYS:-dev-key}   # ← NOVO: autenticação
+      - CONFIGS_PATH=/configs
     env_file:
       - .env
     networks:
@@ -86,11 +116,12 @@ services:
     build:
       context: ./services/worker
       dockerfile: Dockerfile
-    container_name: dissmodel-worker-1
     restart: unless-stopped
     volumes:
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
+      - ../dissmodel:/opt/dissmodel
+      - configs-data:/configs:ro        # ← NOVO: worker também lê configs
     environment:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -99,8 +130,8 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
       - WORKER_QUEUE=${WORKER_QUEUE:-dissmodel_jobs}
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-4}
-      - WORKER_ID=${WORKER_ID:-worker-1}
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
+      - SAL_ANIMATE=0
     env_file:
       - .env
     networks:
@@ -126,11 +157,11 @@ services:
     container_name: dissmodel-minio
     restart: unless-stopped
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "19000:9000"
+      - "19001:9001"
     command: server /data --console-address ":9001"
     volumes:
-      - ./data/storage:/data
+      - minio-data:/data
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-inpe_admin}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
@@ -155,7 +186,7 @@ services:
       - "6379:6379"
     command: redis-server --appendonly yes
     volumes:
-      - ./data/redis:/data
+      - redis-data:/data
     networks:
       - dissmodel-net
     healthcheck:
@@ -180,3 +211,5 @@ volumes:
     name: dissmodel-minio-data
   redis-data:
     name: dissmodel-redis-data
+  configs-data:                         # ← NOVO: volume compartilhado
+    name: dissmodel-configs-data

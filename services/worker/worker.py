@@ -1,198 +1,104 @@
-# ═══════════════════════════════════════════════════════════════
-# DISSMODEL PLATFORM - Worker (DisSModel Execution)
-# ═══════════════════════════════════════════════════════════════
+# services/worker/worker.py
+from __future__ import annotations
 
-import os
-import json
-import time
 import logging
-from datetime import datetime
+import os
+import time
 
 import redis
-from minio import Minio
-from minio.error import S3Error
 
-# ───────────────────────────────────────────────────────────────
-# Configuration
-# ───────────────────────────────────────────────────────────────
+from worker.schemas import ExperimentRecord
+from worker.runner import run_experiment
+from worker.storage import ensure_buckets
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
-    level=os.getenv('DISSMODEL_LOG_LEVEL', 'INFO'),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level  = os.getenv("DISSMODEL_LOG_LEVEL", "INFO"),
+    format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
-REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
-WORKER_QUEUE = os.getenv('WORKER_QUEUE', 'dissmodel_jobs')
-WORKER_ID = os.getenv('WORKER_ID', 'worker-1')
+# ── Config ────────────────────────────────────────────────────────────────────
 
-MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'minio:9000')
-MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'inpe_admin')
-MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'inpe_secret_2024')
+WORKER_ID = os.getenv("WORKER_ID", "worker-1")
+QUEUES    = ["queue:high", "queue:normal", "queue:low"]
 
-# ───────────────────────────────────────────────────────────────
-# Connections
-# ───────────────────────────────────────────────────────────────
+# ── Redis ─────────────────────────────────────────────────────────────────────
 
 redis_client = redis.Redis(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    decode_responses=True
+    host             = os.getenv("REDIS_HOST", "redis"),
+    port             = int(os.getenv("REDIS_PORT", 6379)),
+    decode_responses = True,
 )
 
-minio_client = Minio(
-    MINIO_ENDPOINT,
-    access_key=MINIO_ACCESS_KEY,
-    secret_key=MINIO_SECRET_KEY,
-    secure=False
-)
+# ── Record persistence ────────────────────────────────────────────────────────
 
-# ───────────────────────────────────────────────────────────────
-# Helper Functions
-# ───────────────────────────────────────────────────────────────
+def _load_record(experiment_id: str) -> ExperimentRecord:
+    raw = redis_client.get(f"experiment:{experiment_id}")
+    if not raw:
+        raise ValueError(f"Experiment '{experiment_id}' not found in Redis")
+    return ExperimentRecord.model_validate_json(raw)
 
-def update_job_status(job_id: str, status: str, **kwargs):
-    """Atualiza o status do job no Redis."""
-    job_data = redis_client.get(f"job:{job_id}")
 
-    if not job_data:
-        logger.warning(f"Job {job_id} not found")
+def _save_record(record: ExperimentRecord) -> None:
+    redis_client.set(f"experiment:{record.experiment_id}", record.model_dump_json())
+
+
+# ── Job processing ────────────────────────────────────────────────────────────
+
+def process_job(experiment_id: str) -> None:
+    """Dequeue and execute a single experiment."""
+    logger.info(f"[{WORKER_ID}] Processing experiment={experiment_id}")
+
+    try:
+        record = _load_record(experiment_id)
+    except ValueError as exc:
+        logger.error(f"[{WORKER_ID}] {exc}")
         return
 
-    job = json.loads(job_data)
-    job["status"] = status
-    job["updated_at"] = datetime.utcnow().isoformat()
-
-    for key, value in kwargs.items():
-        job[key] = value
-
-    redis_client.set(f"job:{job_id}", json.dumps(job))
-    logger.info(f"Job {job_id} status updated to: {status}")
-
-
-def execute_model(job_data: dict) -> str:
-    """
-    Executa o modelo DisSModel.
-    Retorna o path do resultado no MinIO.
-    """
-    model_name = job_data["model_name"]
-    input_dataset = job_data["input_dataset"]
-    parameters = job_data.get("parameters", {})
-    job_id = job_data["job_id"]
-
-    logger.info(f"Executing model: {model_name}")
-    logger.info(f"Input: {input_dataset}")
-    logger.info(f"Parameters: {parameters}")
-
-    # ───────────────────────────────────────────────────────────
-    # TODO: Implementar execução real do DisSModel aqui
-    # ───────────────────────────────────────────────────────────
-    # from dissmodel.core import Environment
-    # from dissmodel.models import get_model
-    #
-    # model = get_model(model_name)
-    # env = Environment(**parameters)
-    # results = env.run(model, input_dataset)
-    #
-    # output_path = f"results/{job_id}/output.zarr"
-    # results.to_zarr(f"s3://dissmodel-outputs/{output_path}")
-    # return output_path
-    # ───────────────────────────────────────────────────────────
-
-    # Simulação para teste
-    time.sleep(5)
-
-    output_path = f"results/{job_id}/result.txt"
-    result_content = f"Model: {model_name}\nJob: {job_id}\nStatus: completed"
-
     try:
-        bucket_name = "dissmodel-outputs"
-        if not minio_client.bucket_exists(bucket_name):
-            minio_client.make_bucket(bucket_name)
-
-        minio_client.put_object(
-            bucket_name,
-            output_path,
-            data=result_content.encode('utf-8'),
-            length=len(result_content.encode('utf-8'))
+        completed = run_experiment(record)
+        _save_record(completed)
+        logger.info(
+            f"[{WORKER_ID}] Completed experiment={experiment_id} "
+            f"output={completed.output_path}"
         )
 
-        logger.info(f"Result saved to: {bucket_name}/{output_path}")
-        return f"{bucket_name}/{output_path}"
-
-    except S3Error as e:
-        logger.error(f"Failed to save result: {str(e)}")
-        raise
-
-
-# ───────────────────────────────────────────────────────────────
-# Main Worker Loop
-# ───────────────────────────────────────────────────────────────
-
-def process_job(job_id: str):
-    """Processa um único job."""
-    logger.info(f"Worker {WORKER_ID} processing job: {job_id}")
-
-    try:
-        update_job_status(job_id, "running")
-
-        job_data = redis_client.get(f"job:{job_id}")
-        if not job_data:
-            raise ValueError(f"Job data not found for {job_id}")
-
-        job = json.loads(job_data)
-        result_path = execute_model(job)
-
-        update_job_status(
-            job_id,
-            "completed",
-            completed_at=datetime.utcnow().isoformat(),
-            result_path=result_path
-        )
-
-        logger.info(f"Job {job_id} completed successfully")
-
-    except Exception as e:
-        logger.error(f"Job {job_id} failed: {str(e)}")
-        update_job_status(
-            job_id,
-            "failed",
-            error=str(e),
-            completed_at=datetime.utcnow().isoformat()
-        )
+    except Exception as exc:
+        # run_experiment already sets status="failed" and logs the error
+        # on the record — just persist and move on
+        record.status = "failed"
+        _save_record(record)
+        logger.error(f"[{WORKER_ID}] Failed experiment={experiment_id}: {exc}")
 
 
-def main():
-    """Main worker loop."""
-    logger.info(f"Worker {WORKER_ID} started")
-    logger.info(f"Redis: {REDIS_HOST}:{REDIS_PORT}")
-    logger.info(f"Queue: {WORKER_QUEUE}")
-    logger.info(f"MinIO: {MINIO_ENDPOINT}")
+# ── Main loop ─────────────────────────────────────────────────────────────────
 
-    for bucket in ["dissmodel-inputs", "dissmodel-outputs"]:
-        if not minio_client.bucket_exists(bucket):
-            minio_client.make_bucket(bucket)
-            logger.info(f"Bucket created: {bucket}")
+def main() -> None:
+    logger.info(f"Worker {WORKER_ID} starting")
+    logger.info(f"Redis: {os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', 6379)}")
+    logger.info(f"Queues: {QUEUES}")
+
+    # Ensure MinIO buckets exist before processing any job
+    ensure_buckets()
 
     while True:
         try:
-            # FIX: brpop com lista respeita prioridade em um único blocking call
-            result = redis_client.brpop(
-                ["queue:high", "queue:normal", "queue:low"],
-                timeout=5
-            )
+            # brpop blocks up to 5s and respects queue priority order
+            result = redis_client.brpop(QUEUES, timeout=5)
 
             if result:
-                _, job_id = result
-                process_job(job_id)
+                _, experiment_id = result
+                process_job(experiment_id)
 
         except KeyboardInterrupt:
-            logger.info("Worker shutting down...")
+            logger.info(f"Worker {WORKER_ID} shutting down")
             break
-        except Exception as e:
-            logger.error(f"Worker error: {str(e)}")
-            time.sleep(5)
+
+        except Exception as exc:
+            logger.error(f"[{WORKER_ID}] Unexpected error: {exc}")
+            time.sleep(5)   # back off before retrying
 
 
 if __name__ == "__main__":

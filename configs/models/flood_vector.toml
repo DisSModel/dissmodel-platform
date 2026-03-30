@@ -1,0 +1,16 @@
+# dissmodel-configs/models/flood_vector.toml
+
+[model]
+name  = "flood_vector"
+class = "flood_vector"
+
+[model.bands]
+uso = "Land use class (integer)"
+alt = "Elevation in meters"
+
+[model.parameters]
+taxa_elevacao = 0.5
+attr_uso      = "uso"
+attr_alt      = "alt"
+start_time    = 1
+end_time      = 10

@@ -1,5 +1,5 @@
 # DisSModel + dependências principais
-dissmodel>=0.3.0,<0.4.0
+#dissmodel>=0.3.0,<0.4.0
 
 # Queue e storage
 redis>=5.0.0,<6.0.0
