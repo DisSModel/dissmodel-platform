@@ -28,7 +28,7 @@ services:
       - API_ENDPOINT=http://api:8000
       - DISSMODEL_CLOUD=${DISSMODEL_CLOUD:-false}
       - JUPYTER_ENABLE_LAB=yes
-      - PYTHONPATH=/home/jovyan/work:/opt/dissmodel
+      #- PYTHONPATH=/home/jovyan/work:/opt/dissmodel
     env_file:
       - .env
     networks:
@@ -60,7 +60,7 @@ services:
       - API_KEYS=${API_KEYS:-dev-key}
       - CONFIGS_PATH=/configs
       - CONFIGS_SYNC_INTERVAL=${CONFIGS_SYNC_INTERVAL:-900}
-      - PYTHONPATH=/app:/opt/dissmodel
+      #- PYTHONPATH=/app:/opt/dissmodel
     env_file:
       - .env
     networks:

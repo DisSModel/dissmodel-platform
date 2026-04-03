@@ -100,10 +100,6 @@ def _ensure_package(spec: dict) -> None:
 
 
 def _import_package(spec: dict) -> None:
-    """
-    Import the model package after installation so __init_subclass__
-    fires and registers the executor in ExecutorRegistry.
-    """
     package = spec.get("model", {}).get("package", "")
     if not package:
         return
@@ -117,13 +113,15 @@ def _import_package(spec: dict) -> None:
         .replace("-", "_")
     )
 
-    # Try importing the package and its executor submodule
-    # Registration happens in executor/__init__.py via __init_subclass__
+    import logging
+    logger = logging.getLogger(__name__)
+
     for module in [pkg_name, f"{pkg_name}.executor"]:
         try:
             importlib.import_module(module)
-        except ImportError:
-            pass
+            logger.info(f"Imported: {module}")
+        except Exception as exc:           # ← era ImportError, agora captura tudo
+            logger.error(f"Failed to import {module}: {exc}")   # ← loga o erro
 
 
 # ── Record factory ────────────────────────────────────────────────────────────
