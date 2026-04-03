@@ -6,8 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
     SAL_ANIMATE=0
 
+# Adicionamos o 'git' nesta lista!
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl build-essential \
+    curl build-essential git \
     libgdal-dev gdal-bin \
     libspatialindex-dev \
     && rm -rf /var/lib/apt/lists/*

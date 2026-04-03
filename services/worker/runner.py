@@ -1,13 +1,15 @@
 # services/worker/runner.py
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 from dissmodel.executor.registry import ExecutorRegistry
-from dissmodel.executor.schemas import ExperimentRecord, JobRequest, InlineJobRequest
+from dissmodel.executor.schemas  import ExperimentRecord, InlineJobRequest, JobRequest
 
 CONFIGS_PATH = Path("/configs")
 
@@ -15,28 +17,15 @@ CONFIGS_PATH = Path("/configs")
 # ── Registry helpers ──────────────────────────────────────────────────────────
 
 def _git_head() -> str:
-    """Return current HEAD hash of the configs repo, or 'local' if git is missing."""
+    """Return current HEAD hash of the configs repo, or 'local-dev' if git is missing."""
     try:
-        # Se a pasta .git não existe, nem tenta rodar o comando
         if not (CONFIGS_PATH / ".git").exists():
             return "local-dev"
-
         return subprocess.check_output(
             ["git", "-C", str(CONFIGS_PATH), "rev-parse", "--short", "HEAD"],
             stderr=subprocess.DEVNULL,
         ).decode().strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        # Se o comando 'git' não for encontrado ou falhar, retorna 'unknown'
-        return "unknown"
-
-def ____git_head() -> str:
-    """Return current HEAD hash of the configs repo."""
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(CONFIGS_PATH), "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except subprocess.CalledProcessError:
         return "unknown"
 
 
@@ -53,7 +42,6 @@ def _load_spec(model_name: str) -> dict:
     Load and return the TOML spec for a registered model.
     Raises FileNotFoundError if the model is not in the registry.
     """
-    # Import here to use the cached version from registry.py
     from worker.api_registry import load_model_spec
     return load_model_spec(model_name)
 
@@ -65,6 +53,78 @@ def _merge_parameters(resolved_spec: dict, overrides: dict) -> dict:
     """
     defaults = resolved_spec.get("model", {}).get("parameters", {})
     return {**defaults, **overrides}
+
+
+def _infer_source_type(uri: str) -> str:
+    """Infer DataSource.type from URI scheme."""
+    if uri.startswith("s3://"):
+        return "s3"
+    if uri.startswith("http://") or uri.startswith("https://"):
+        return "http"
+    return "local"
+
+
+# ── Package installation ──────────────────────────────────────────────────────
+
+def _ensure_package(spec: dict) -> None:
+    """
+    Install the model package declared in the spec before resolving executor.
+
+    Supports three URI schemes:
+      PyPI:    "coastal-dynamics==0.1.0"
+      GitHub:  "git+https://github.com/org/repo@branch"
+      Local:   "/opt/coastal-dynamics"  (editable install — development only)
+
+    No-op if 'package' field is absent from the spec.
+    """
+    package = spec.get("model", {}).get("package")
+    if not package:
+        return
+
+    if package.startswith("/"):
+        # Local volume — editable install for development
+        cmd = [sys.executable, "-m", "pip", "install",
+               "-e", package, "--quiet"]
+    else:
+        # PyPI or GitHub
+        cmd = [sys.executable, "-m", "pip", "install",
+               package, "--quiet", "--no-cache-dir"]
+
+    try:
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Failed to install package '{package}': {exc}\n"
+            f"Check the 'package' field in the model TOML."
+        ) from exc
+
+
+def _import_package(spec: dict) -> None:
+    """
+    Import the model package after installation so __init_subclass__
+    fires and registers the executor in ExecutorRegistry.
+    """
+    package  = spec.get("model", {}).get("package", "")
+    if not package:
+        return
+
+    # Derive importable module name from package spec
+    # "coastal-dynamics==0.1.0"          → "coastal_dynamics"
+    # "git+https://github.com/org/repo"  → "repo"
+    # "/opt/coastal-dynamics"            → "coastal_dynamics"
+    pkg_name = (
+        package
+        .split("==")[0]          # strip version
+        .split("@")[0]           # strip git ref
+        .rstrip("/")
+        .split("/")[-1]          # last path segment
+        .replace("-", "_")       # PEP 8 module name
+    )
+
+    try:
+        importlib.import_module(pkg_name)
+    except ImportError:
+        pass   # package may use a different top-level name — registry will catch it
 
 
 # ── Record factory ────────────────────────────────────────────────────────────
@@ -87,7 +147,6 @@ def build_record(req: JobRequest) -> ExperimentRecord:
         parameters    = _merge_parameters(spec, req.parameters),
     )
 
-    # Resolve input URI into DataSource
     record.source.uri  = req.input_dataset
     record.source.type = _infer_source_type(req.input_dataset)
 
@@ -104,7 +163,7 @@ def build_record_inline(req: InlineJobRequest) -> ExperimentRecord:
 
     record = ExperimentRecord(
         model_name    = spec.get("model", {}).get("name", "inline"),
-        model_commit  = "local-inline",   # not reproducible via registry
+        model_commit  = "local-inline",
         code_version  = _code_version(),
         resolved_spec = spec,
         input_format  = req.input_format,
@@ -120,15 +179,6 @@ def build_record_inline(req: InlineJobRequest) -> ExperimentRecord:
     return record
 
 
-def _infer_source_type(uri: str) -> str:
-    """Infer DataSource.type from URI scheme."""
-    if uri.startswith("s3://"):
-        return "s3"
-    if uri.startswith("http://") or uri.startswith("https://"):
-        return "http"
-    return "local"
-
-
 # ── Main runner ───────────────────────────────────────────────────────────────
 
 def run_experiment(record: ExperimentRecord) -> ExperimentRecord:
@@ -136,25 +186,27 @@ def run_experiment(record: ExperimentRecord) -> ExperimentRecord:
     Execute a simulation end-to-end.
 
     Orchestrates the executor lifecycle:
-        validate → run → save
+        install package → validate → run → save
 
     Updates record.status throughout. On failure, sets status="failed"
     and appends the error to record.logs before re-raising.
     """
-    executor_cls = _resolve_executor(record)
-    executor     = executor_cls()
-
     try:
-        # Validate before touching any data
         record.status = "running"
+
+        # Install and import model package before resolving executor
+        _ensure_package(record.resolved_spec)
+        _import_package(record.resolved_spec)
+
+        executor_cls = _resolve_executor(record)
+        executor     = executor_cls()
+
         record.add_log("Validating spec and input...")
         executor.validate(record)
 
-        # Execute simulation
         record.add_log(f"Running executor={executor_cls.name}...")
         result = executor.run(record)
 
-        # Persist results
         record.add_log("Saving output...")
         record = executor.save(result, record)
 
@@ -172,14 +224,14 @@ def reproduce_experiment(original: ExperimentRecord) -> ExperimentRecord:
     Re-run an experiment from its stored snapshot.
 
     Uses resolved_spec directly — bypasses the current registry state.
-    This guarantees the reproduction uses the exact same spec as the
-    original, even if the TOML has changed since.
+    Guarantees the reproduction uses the exact same spec as the original,
+    even if the TOML has changed since.
     """
     record = ExperimentRecord(
         model_name    = original.model_name,
         model_commit  = original.model_commit,
         code_version  = _code_version(),
-        resolved_spec = original.resolved_spec,   # snapshot — not a fresh load
+        resolved_spec = original.resolved_spec,
         input_format  = original.input_format,
         column_map    = original.column_map,
         band_map      = original.band_map,
@@ -205,7 +257,7 @@ def _resolve_executor(record: ExperimentRecord):
             f"Check the TOML in dissmodel-configs."
         )
 
-    # Ensure all executors are imported so __init_subclass__ has fired
+    # Ensure built-in executors are registered
     import worker.executors  # noqa: F401
 
     return ExecutorRegistry.get(model_class)

@@ -86,7 +86,7 @@ services:
     volumes:
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
-      - ../dissmodel:/opt/dissmodel
+      #- ../dissmodel:/opt/dissmodel
       - ./configs:/configs:ro
       - ./services/worker:/app/worker
       - pip-cache:/home/appuser/.cache/pip # Cache compartilhado (path p/ appuser)

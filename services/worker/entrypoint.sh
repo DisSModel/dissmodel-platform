@@ -1,27 +1,32 @@
 #!/bin/bash
 set -e
 
-# Caminho para um arquivo oculto que indica que a instalação foi concluída
 INSTALL_FLAG="/home/appuser/.cache/pip/.dissmodel_installed"
+# A URL exata da sua branch usando a sintaxe do PIP
+GIT_URL="git+https://github.com/LambdaGeo/dissmodel.git@update-platform"
 
 echo "🔧 DisSModel Worker Starting..."
 
+# CENÁRIO 1: Desenvolvimento Local (Mapeamento de Volume no Docker Compose)
 if [ -d "/opt/dissmodel" ]; then
-    # Só instala se o arquivo 'flag' não existir
     if [ ! -f "$INSTALL_FLAG" ]; then
-        echo "📦 Installing dissmodel and ALL dependencies (this may take a while)..."
-        
-        # O pip install -e vai ler o setup.py/pyproject.toml e baixar tudo
+        echo "📦 Installing LOCAL dissmodel and dependencies..."
         pip install -e /opt/dissmodel
-        
-        # Cria o flag para que no próximo boot ele pule esta etapa
         touch "$INSTALL_FLAG"
-        echo "✅ dissmodel and dependencies installed successfully."
+        echo "✅ Local installation complete."
     else
-        echo "✅ Dependencies already cached. Skipping installation."
+        echo "✅ Local dependencies already cached."
     fi
+
+# CENÁRIO 2: Nuvem/Produção (Sempre baixa da branch update-platform)
 else
-    echo "ℹ️  No development volume found at /opt/dissmodel."
+    echo "☁️ Installing dissmodel from GitHub (Branch: update-platform)..."
+    
+    # O --upgrade garante que, se você der restart no container, 
+    # ele vai puxar o commit mais recente dessa branch.
+    pip install "$GIT_URL" --upgrade --no-cache-dir
+    
+    echo "✅ GitHub installation complete."
 fi
 
 echo "🚀 Starting worker..."
