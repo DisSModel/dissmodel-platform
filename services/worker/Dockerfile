@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     DEBIAN_FRONTEND=noninteractive \
-    SAL_ANIMATE=0
+    SAL_ANIMATE=0 \
+    MPLCONFIGDIR="/tmp/matplotlib"
 
 # Adicionamos o 'git' nesta lista!
 RUN apt-get update && apt-get install -y --no-install-recommends \

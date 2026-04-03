@@ -104,27 +104,26 @@ def _import_package(spec: dict) -> None:
     Import the model package after installation so __init_subclass__
     fires and registers the executor in ExecutorRegistry.
     """
-    package  = spec.get("model", {}).get("package", "")
+    package = spec.get("model", {}).get("package", "")
     if not package:
         return
 
-    # Derive importable module name from package spec
-    # "coastal-dynamics==0.1.0"          → "coastal_dynamics"
-    # "git+https://github.com/org/repo"  → "repo"
-    # "/opt/coastal-dynamics"            → "coastal_dynamics"
     pkg_name = (
         package
-        .split("==")[0]          # strip version
-        .split("@")[0]           # strip git ref
+        .split("==")[0]
+        .split("@")[0]
         .rstrip("/")
-        .split("/")[-1]          # last path segment
-        .replace("-", "_")       # PEP 8 module name
+        .split("/")[-1]
+        .replace("-", "_")
     )
 
-    try:
-        importlib.import_module(pkg_name)
-    except ImportError:
-        pass   # package may use a different top-level name — registry will catch it
+    # Try importing the package and its executor submodule
+    # Registration happens in executor/__init__.py via __init_subclass__
+    for module in [pkg_name, f"{pkg_name}.executor"]:
+        try:
+            importlib.import_module(module)
+        except ImportError:
+            pass
 
 
 # ── Record factory ────────────────────────────────────────────────────────────

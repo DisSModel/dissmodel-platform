@@ -2,7 +2,7 @@
 
 [model]
 name    = "coastal_raster"
-class   = "CoastalRasterExecutor"
+class   = "coastal_raster"
 package = "git+https://github.com/LambdaGeo/coastal-dynamics@uniform"
 
 [model.parameters]
