@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # 1. Instala dependências de sistema (IGUAL ao Worker para suportar GeoPandas/GDAL)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl build-essential \
+    curl build-essential git \
     libgdal-dev gdal-bin \
     && rm -rf /var/lib/apt/lists/*
 
