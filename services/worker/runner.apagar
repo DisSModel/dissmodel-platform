@@ -3,11 +3,8 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
-import logging
-import os
 import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 
@@ -15,7 +12,6 @@ from dissmodel.executor.registry import ExecutorRegistry
 from dissmodel.executor.schemas  import ExperimentRecord, InlineJobRequest, JobRequest
 
 CONFIGS_PATH = Path("/configs")
-logger       = logging.getLogger(__name__)
 
 
 # ── Registry helpers ──────────────────────────────────────────────────────────
@@ -72,7 +68,7 @@ def _infer_source_type(uri: str) -> str:
 
 def _ensure_package(spec: dict) -> None:
     """
-    Install the model package declared in the spec.
+    Install the model package declared in the spec before resolving executor.
 
     Supports three URI schemes:
       PyPI:    "coastal-dynamics==0.1.0"
@@ -85,22 +81,47 @@ def _ensure_package(spec: dict) -> None:
     if not package:
         return
 
-    logger.info(f"Installing package: {package}")
-
     if package.startswith("/"):
-        cmd = [sys.executable, "-m", "pip", "install", "-e", package, "--quiet"]
+        # Local volume — editable install for development
+        cmd = [sys.executable, "-m", "pip", "install",
+               "-e", package, "--quiet"]
     else:
+        # PyPI or GitHub
         cmd = [sys.executable, "-m", "pip", "install",
                package, "--quiet", "--no-cache-dir"]
 
     try:
         subprocess.check_call(cmd)
-        logger.info(f"Package installed: {package}")
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             f"Failed to install package '{package}': {exc}\n"
             f"Check the 'package' field in the model TOML."
         ) from exc
+
+
+def _import_package(spec: dict) -> None:
+    package = spec.get("model", {}).get("package", "")
+    if not package:
+        return
+
+    pkg_name = (
+        package
+        .split("==")[0]
+        .split("@")[0]
+        .rstrip("/")
+        .split("/")[-1]
+        .replace("-", "_")
+    )
+
+    import logging
+    logger = logging.getLogger(__name__)
+
+    for module in [pkg_name, f"{pkg_name}.executor"]:
+        try:
+            importlib.import_module(module)
+            logger.info(f"Imported: {module}")
+        except Exception as exc:           # ← era ImportError, agora captura tudo
+            logger.error(f"Failed to import {module}: {exc}")   # ← loga o erro
 
 
 # ── Record factory ────────────────────────────────────────────────────────────
@@ -159,46 +180,40 @@ def build_record_inline(req: InlineJobRequest) -> ExperimentRecord:
 
 def run_experiment(record: ExperimentRecord) -> ExperimentRecord:
     """
-    Execute a simulation end-to-end in a subprocess.
+    Execute a simulation end-to-end.
 
-    Running in a subprocess guarantees that packages installed by
-    _ensure_package are fully visible in a fresh Python environment
-    — solving the plugin pattern without import caching issues.
+    Orchestrates the executor lifecycle:
+        install package → validate → run → save
 
-    Flow:
-        1. Install package in parent process (pip modifies sys.path on disk)
-        2. Spawn subprocess — inherits the updated environment
-        3. Subprocess imports, registers and runs the executor
-        4. Updated ExperimentRecord returned via stdout JSON
+    Updates record.status throughout. On failure, sets status="failed"
+    and appends the error to record.logs before re-raising.
     """
-    record.status = "running"
-    record.add_log("Dispatching to subprocess...")
-
-    # Install package in parent process so subprocess inherits it
-    _ensure_package(record.resolved_spec)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(record.model_dump_json())
-        record_path = f.name
-
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "worker.job_runner", record_path],
-            capture_output = True,
-            text           = True,
-        )
+        record.status = "running"
 
-        if result.returncode != 0:
-            record.status = "failed"
-            record.add_log(f"Subprocess failed:\n{result.stderr}")
-            logger.error(f"job_runner stderr:\n{result.stderr}")
-            raise RuntimeError(result.stderr)
+        # Install and import model package before resolving executor
+        _ensure_package(record.resolved_spec)
+        _import_package(record.resolved_spec)
 
-        updated = ExperimentRecord.model_validate_json(result.stdout)
-        return updated
+        executor_cls = _resolve_executor(record)
+        executor     = executor_cls()
 
-    finally:
-        os.unlink(record_path)
+        record.add_log("Validating spec and input...")
+        executor.validate(record)
+
+        record.add_log(f"Running executor={executor_cls.name}...")
+        result = executor.run(record)
+
+        record.add_log("Saving output...")
+        record = executor.save(result, record)
+
+        record.add_log(f"Completed — output={record.output_path}")
+        return record
+
+    except Exception as exc:
+        record.status = "failed"
+        record.add_log(f"Failed: {exc}")
+        raise
 
 
 def reproduce_experiment(original: ExperimentRecord) -> ExperimentRecord:
@@ -230,7 +245,7 @@ def reproduce_experiment(original: ExperimentRecord) -> ExperimentRecord:
 def _resolve_executor(record: ExperimentRecord):
     """
     Look up the executor class from the model spec.
-    Only used as fallback — main path goes through job_runner subprocess.
+    Raises KeyError with a clear message if not registered.
     """
     model_class = record.resolved_spec.get("model", {}).get("class")
     if not model_class:
@@ -239,5 +254,7 @@ def _resolve_executor(record: ExperimentRecord):
             f"Check the TOML in dissmodel-configs."
         )
 
+    # Ensure built-in executors are registered
     import worker.executors  # noqa: F401
+
     return ExecutorRegistry.get(model_class)
