@@ -4,117 +4,117 @@
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
 
-Plataforma de execução escalável para o **DisSModel** (Distributed Spatial Simulation Model).
+Scalable execution platform for **DisSModel** (Distributed Spatial Simulation Model).
 
-Ambiente integrado para desenvolvimento e execução de modelos geoespaciais, com JupyterLab, API REST e Workers distribuídos.
+An integrated environment for developing and running geospatial models, featuring JupyterLab, a REST API, and distributed workers.
 
-## 🌍 Onde Roda
+## 🌍 Where It Runs
 
-- ✅ Servidor local (desktop/laptop)
-- ✅ Cluster on-premise (INPE, universidades)
-- ✅ Nuvem privada (OpenStack, etc.)
-- ✅ Nuvem pública (AWS, GCP, Azure) - opcional
+- ✅ Local server (desktop/laptop)
+- ✅ On-premise cluster (INPE, universities)
+- ✅ Private cloud (OpenStack, etc.)
+- ✅ Public cloud (AWS, GCP, Azure) — optional
 
 ## 🚀 Quick Start
 
-### Pré-requisitos
+### Prerequisites
 
-- Docker e Docker Compose instalados
-- 8GB+ RAM recomendado
-- 20GB+ espaço em disco
+- Docker and Docker Compose installed
+- 8 GB+ RAM recommended
+- 20 GB+ free disk space
 
-### Instalação Rápida
+### Installation
 
 ```bash
-# 1. Clonar repositório
+# 1. Clone the repository
 git clone https://github.com/LambdaGeo/dissmodel-platform.git
 cd dissmodel-platform
 
-# 2. Configurar variáveis de ambiente
+# 2. Configure environment variables
 cp .env.example .env
 
-# 3. Subir plataforma
+# 3. Start the platform
 docker compose up --build
 
-# 4. Acessar serviços
+# 4. Access services
 # JupyterLab: http://localhost:8888
 # API Docs:   http://localhost:8000/docs
 # MinIO:      http://localhost:9001
 ```
 
-### Parar Plataforma
+### Stop the Platform
 
 ```bash
 docker compose down
 ```
 
-### Parar e Limpar Dados
+### Stop and Remove Data
 
 ```bash
-docker compose down -v  # Remove volumes (cuidado!)
+docker compose down -v  # Removes volumes (use with caution!)
 ```
 
-## 🏗️ Arquitetura
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    DISSMODEL PLATFORM                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  [Pesquisador] → Navegador → JupyterLab (Container)             │
+│  [Researcher] → Browser → JupyterLab (Container)               │
 │                              │                                  │
-│                              ├── Python Direto (imports)        │
-│                              └── API REST (jobs pesados)        │
+│                              ├── Direct Python (imports)        │
+│                              └── REST API (heavy jobs)          │
 │                              │                                  │
 │                              ▼                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │              SERVIDOR / DOCKER HOST                      │   │
+│  │              SERVER / DOCKER HOST                        │   │
 │  │                                                          │   │
 │  │  🟦 Jupyter    🟩 API      🟥 Worker    🗄️ MinIO  🔄 Redis │   │
-│  │  (Frontend)  (Gateway)   (Process.)   (Dados)   (Fila)   │   │
+│  │  (Frontend)  (Gateway)   (Processing) (Storage) (Queue)  │   │
 │  │                                                          │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Componentes
+### Components
 
-| Serviço | Porta | Descrição |
-|---------|-------|-----------|
-| **JupyterLab** | 8888 | Ambiente de desenvolvimento Python |
-| **API Gateway** | 8000 | FastAPI para submissão de jobs |
-| **Worker** | - | Processamento em background (escalável) |
-| **MinIO** | 9000/9001 | Storage S3-compatible (dados) |
-| **Redis** | 6379 | Fila de mensagens e cache |
+| Service | Port | Description |
+|---------|------|-------------|
+| **JupyterLab** | 8888 | Python development environment |
+| **API Gateway** | 8000 | FastAPI for job submission |
+| **Worker** | — | Background processing (scalable) |
+| **MinIO** | 9000/9001 | S3-compatible object storage |
+| **Redis** | 6379 | Message queue and cache |
 
-## 📚 Documentação
+## 📚 Documentation
 
-- [Arquitetura](docs/architecture.md) - Detalhes técnicos e decisões
-- [Deploy](docs/deployment.md) - Como implantar em diferentes ambientes
-- [Guia do Usuário](docs/user-guide.md) - Para pesquisadores
+- [Architecture](docs/architecture.md) — Technical details and design decisions
+- [Deployment](docs/deployment.md) — How to deploy in different environments
+- [User Guide](docs/user-guide.md) — For researchers
 
-## 📋 Exemplo de Uso
+## 📋 Usage Examples
 
-### Desenvolvimento Local (Python Direto)
+### Local Development (Direct Python)
 
 ```python
 from dissmodel.core import Environment
 from dissmodel.geo.raster import RasterBackend
 
-# Carregar dados
+# Load data
 backend = RasterBackend.from_file('/data/inputs/dem.tif')
 
-# Configurar e executar modelo
+# Configure and run model
 env = Environment(end_time=100)
 model = FloodModel(backend=backend, sea_level=0.05)
 results = env.run()
 
-# Visualizar
+# Visualise
 model.display()
 ```
 
-### Execução via API (Jobs Pesados)
+### API Execution (Heavy Jobs)
 
 ```python
 import requests
@@ -133,52 +133,52 @@ response = requests.post(
 job_id = response.json()['job_id']
 ```
 
-## 🔧 Configuração
+## 🔧 Configuration
 
-### Variáveis de Ambiente
+### Environment Variables
 
-Copie `.env.example` para `.env` e ajuste:
+Copy `.env.example` to `.env` and adjust as needed:
 
 ```bash
 # MinIO Credentials
-MINIO_ROOT_USER=inpe_admin
-MINIO_ROOT_PASSWORD=inpe_secret_2024
+MINIO_ROOT_USER=user
+MINIO_ROOT_PASSWORD=user_password
 
 # DisSModel Config
 DISSMODEL_LOG_LEVEL=INFO
 DISSMODEL_CLOUD=false
 ```
 
-### Escalar Workers
+### Scaling Workers
 
 ```bash
-# Aumentar para 5 workers
+# Scale up to 5 workers
 docker compose up --scale worker=5
 ```
 
-## 🤝 Contribuição
+## 🤝 Contributing
 
-1. Fork o repositório
-2. Crie uma branch (`git checkout -b feature/nova-feature`)
-3. Commit suas mudanças (`git commit -m 'Add nova feature'`)
-4. Push para a branch (`git push origin feature/nova-feature`)
-5. Abra um Pull Request
+1. Fork the repository
+2. Create a branch (`git checkout -b feature/new-feature`)
+3. Commit your changes (`git commit -m 'Add new feature'`)
+4. Push to the branch (`git push origin feature/new-feature`)
+5. Open a Pull Request
 
-Veja [docs/developer-guide.md](docs/developer-guide.md) para mais detalhes.
+See [docs/developer-guide.md](docs/developer-guide.md) for more details.
 
-## 📄 Licença
+## 📄 License
 
-MIT License - ver [LICENSE](LICENSE)
+MIT License — see [LICENSE](LICENSE)
 
-## 🙏 Agradecimentos
+## 🙏 Acknowledgements
 
-- [DisSModel](https://github.com/LambdaGeo/dissmodel) - Biblioteca base de modelagem
-- [Jupyter Project](https://jupyter.org/) - Ambiente de desenvolvimento
-- [MinIO](https://min.io/) - Storage S3-compatible
-- [Pangeo](https://pangeo.io/) - Inspiração para arquitetura cloud-native
+- [DisSModel](https://github.com/LambdaGeo/dissmodel) — Core modelling library
+- [Jupyter Project](https://jupyter.org/) — Development environment
+- [MinIO](https://min.io/) — S3-compatible object storage
+- [Pangeo](https://pangeo.io/) — Inspiration for cloud-native architecture
 
-## 📞 Contato
+## 📞 Contact
 
-- **Organização:** LambdaGeo / INPE
+- **Organisation:** LambdaGeo / INPE
 - **Issues:** https://github.com/LambdaGeo/dissmodel-platform/issues
-- **Discussões:** https://github.com/LambdaGeo/dissmodel-platform/discussions
+- **Discussions:** https://github.com/LambdaGeo/dissmodel-platform/discussions

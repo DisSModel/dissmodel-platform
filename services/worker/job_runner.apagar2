@@ -1,0 +1,70 @@
+# services/worker/job_runner.py
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+from pathlib import Path
+
+
+def _import_executor_package(package: str) -> None:
+    """
+    Import the package and its executor submodule to trigger
+    __init_subclass__ registration in ExecutorRegistry.
+    """
+    pkg_name = (
+        package
+        .split("==")[0]
+        .split("@")[0]
+        .rstrip("/")
+        .split("/")[-1]
+        .replace("-", "_")
+    )
+    for module in [pkg_name, f"{pkg_name}.executor"]:
+        try:
+            importlib.import_module(module)
+        except ImportError:
+            pass
+
+
+def main(record_path: str) -> None:
+    # Redirect stdout to stderr before any import that might print
+    # — keeps stdout clean for the JSON result returned to parent process
+    _real_stdout = os.fdopen(os.dup(1), "w")
+    sys.stdout   = sys.stderr
+
+    from dissmodel.executor.registry import ExecutorRegistry
+    from dissmodel.executor.schemas  import ExperimentRecord
+
+    record  = ExperimentRecord.model_validate_json(Path(record_path).read_text())
+    spec    = record.resolved_spec
+    package = spec.get("model", {}).get("package", "")
+
+    if package:
+        _import_executor_package(package)
+
+    import worker.executors  # noqa: F401
+
+    model_class  = spec.get("model", {}).get("class")
+    executor_cls = ExecutorRegistry.get(model_class)
+    executor     = executor_cls()
+
+    try:
+        executor.validate(record)
+        result = executor.run(record)
+        record = executor.save(result, record)
+        record.add_log(f"Completed — output={record.output_path}")
+    except Exception as exc:
+        record.status = "failed"
+        record.add_log(f"Failed: {exc}")
+        raise
+    finally:
+        # Always restore and write result — even on failure the parent needs the record
+        sys.stdout = _real_stdout
+
+    _real_stdout.write(record.model_dump_json() + "\n")
+    _real_stdout.flush()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1])
