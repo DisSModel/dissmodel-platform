@@ -15,4 +15,4 @@ requests>=2.31.0,<3.0.0
 
 apscheduler         
 tomli              
-git+https://github.com/LambdaGeo/dissmodel.git@develop
+dissmodel>=0.4.0
