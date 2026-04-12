@@ -3,7 +3,7 @@
 [model]
 name    = "coastal_raster"
 class   = "coastal_raster"
-package = "git+https://github.com/LambdaGeo/coastal-dynamics@executor"
+package = "git+https://github.com/LambdaGeo/coastal-dynamics@develop"
 
 [model.parameters]
 end_time      = 88
