@@ -4,7 +4,6 @@ from __future__ import annotations
 import importlib
 import os
 import sys
-import time
 from pathlib import Path
 
 
@@ -34,9 +33,10 @@ def main(record_path: str) -> None:
     _real_stdout = os.fdopen(os.dup(1), "w")
     sys.stdout   = sys.stderr
 
+    from dissmodel.executor.runner   import execute_lifecycle
     from dissmodel.executor.registry import ExecutorRegistry
     from dissmodel.executor.schemas  import ExperimentRecord
-    from dissmodel.io._utils         import write_text  # <-- Para salvar os artefatos
+    from dissmodel.io._utils         import write_text
 
     record  = ExperimentRecord.model_validate_json(Path(record_path).read_text())
     spec    = record.resolved_spec
@@ -52,28 +52,15 @@ def main(record_path: str) -> None:
     executor     = executor_cls()
 
     try:
-        # ── 1. Execução com Cronômetro (Feature Parity com o CLI) ─────────────
-        t0 = time.perf_counter()
-        executor.validate(record)
-        t_val = time.perf_counter() - t0
+        record, timings = execute_lifecycle(executor, record)
 
-        t0 = time.perf_counter()
-        result = executor.run(record)
-        t_run = time.perf_counter() - t0
+        t_val   = timings["time_validate_sec"]
+        t_load  = timings["time_load_sec"]
+        t_run   = timings["time_run_sec"]
+        t_save  = timings["time_save_sec"]
+        t_total = timings["time_total_sec"]
 
-        t0 = time.perf_counter()
-        record = executor.save(result, record)
-        t_save = time.perf_counter() - t0
-
-        t_total = t_val + t_run + t_save
-
-        # ── 2. Alimentando o dicionário nativo 'metrics' ──────────────────────
-        record.metrics["time_validate_sec"] = round(t_val, 3)
-        record.metrics["time_run_sec"]      = round(t_run, 3)
-        record.metrics["time_save_sec"]     = round(t_save, 3)
-        record.metrics["time_total_sec"]    = round(t_total, 3)
-
-        # ── 3. Criando os Artefatos de Profiling e Record ─────────────────────
+        # ── Profiling Markdown artefact (cloud-specific template) ─────────────
         md_report = (
             f"# Profiling Report: {getattr(executor_cls, 'name', 'Model')}\n\n"
             f"**Experiment ID:** `{record.experiment_id}`\n"
@@ -82,13 +69,14 @@ def main(record_path: str) -> None:
             "## Execution Times\n\n"
             "| Phase | Time (seconds) | % of Total |\n"
             "|---|---|---|\n"
-            f"| **Validate** | {t_val:.3f} | {(t_val/t_total)*100:.1f}% |\n"
-            f"| **Run** | {t_run:.3f} | {(t_run/t_total)*100:.1f}% |\n"
-            f"| **Save** | {t_save:.3f} | {(t_save/t_total)*100:.1f}% |\n"
-            f"| **Total** | **{t_total:.3f}** | **100%** |\n"
+            f"| **Validate** | {t_val:.3f}   | {(t_val   / t_total) * 100:.1f}% |\n"
+            f"| **Load**     | {t_load:.3f}  | {(t_load  / t_total) * 100:.1f}% |\n"
+            f"| **Run**      | {t_run:.3f}   | {(t_run   / t_total) * 100:.1f}% |\n"
+            f"| **Save**     | {t_save:.3f}  | {(t_save  / t_total) * 100:.1f}% |\n"
+            f"| **Total**    | **{t_total:.3f}** | **100%** |\n"
         )
 
-        # Resolução de diretório compatível com s3://
+        # Resolve base directory — compatible with s3:// paths
         if record.output_path:
             base_dir = record.output_path.rsplit("/", 1)[0]
         else:
@@ -96,8 +84,8 @@ def main(record_path: str) -> None:
 
         profiling_uri = f"{base_dir}/profiling_{record.experiment_id[:8]}.md"
         record_uri    = f"{base_dir}/{record.experiment_id[:8]}.record.json"
-        
-        # Grava o Markdown na S3
+
+        # Write Markdown to S3
         try:
             chk_md = write_text(md_report, profiling_uri, content_type="text/markdown")
             record.add_artifact("profiling", chk_md)
@@ -105,18 +93,18 @@ def main(record_path: str) -> None:
         except Exception as e:
             record.add_log(f"Warning: Could not save profiling artifact: {e}")
 
-        # Grava o JSON do Record diretamente na S3
+        # Write record JSON to S3
         try:
             json_data = record.model_dump_json(indent=2)
-            chk_json = write_text(json_data, record_uri, content_type="application/json")
+            chk_json  = write_text(json_data, record_uri, content_type="application/json")
             record.add_artifact("record_json", chk_json)
             record.add_log(f"Saved record JSON → {record_uri}")
         except Exception as e:
             record.add_log(f"Warning: Could not save record JSON: {e}")
 
-        # Log final padronizado
         record.add_log(
-            f"Completed — val={t_val:.2f}s | run={t_run:.2f}s | save={t_save:.2f}s | total={t_total:.2f}s"
+            f"Completed — val={t_val:.2f}s | load={t_load:.2f}s | "
+            f"run={t_run:.2f}s | save={t_save:.2f}s | total={t_total:.2f}s"
         )
 
     except Exception as exc:
@@ -124,7 +112,7 @@ def main(record_path: str) -> None:
         record.add_log(f"Failed: {exc}")
         raise
     finally:
-        # Always restore and write result — even on failure the parent needs the record
+        # Always restore stdout — even on failure the parent process needs the record
         sys.stdout = _real_stdout
 
     _real_stdout.write(record.model_dump_json() + "\n")
