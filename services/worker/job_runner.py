@@ -7,29 +7,7 @@ import sys
 from pathlib import Path
 
 
-def _import_executor_package(package: str) -> None:
-    """
-    Import the package and its executor submodule to trigger
-    __init_subclass__ registration in ExecutorRegistry.
-    """
-    pkg_name = (
-        package
-        .split("==")[0]
-        .split("@")[0]
-        .rstrip("/")
-        .split("/")[-1]
-        .replace("-", "_")
-    )
-    for module in [pkg_name, f"{pkg_name}.executor"]:
-        try:
-            importlib.import_module(module)
-        except ImportError:
-            pass
-
-
 def main(record_path: str) -> None:
-    # Redirect stdout to stderr before any import that might print
-    # — keeps stdout clean for the JSON result returned to parent process
     _real_stdout = os.fdopen(os.dup(1), "w")
     sys.stdout   = sys.stderr
 
@@ -41,10 +19,18 @@ def main(record_path: str) -> None:
     record  = ExperimentRecord.model_validate_json(Path(record_path).read_text())
     spec    = record.resolved_spec
     package = spec.get("model", {}).get("package", "")
+    module  = spec.get("model", {}).get("executor_module", "")  # ← novo
 
     if package:
-        _import_executor_package(package)
+        import subprocess
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", package],
+            check=True, capture_output=True,
+        )
 
+    if module:
+        importlib.import_module(module)                          # ← novo, sem try/except
+    
     import worker.executors  # noqa: F401
 
     model_class  = spec.get("model", {}).get("class")
@@ -60,7 +46,6 @@ def main(record_path: str) -> None:
         t_save  = timings["time_save_sec"]
         t_total = timings["time_total_sec"]
 
-        # ── Profiling Markdown artefact (cloud-specific template) ─────────────
         md_report = (
             f"# Profiling Report: {getattr(executor_cls, 'name', 'Model')}\n\n"
             f"**Experiment ID:** `{record.experiment_id}`\n"
@@ -76,7 +61,6 @@ def main(record_path: str) -> None:
             f"| **Total**    | **{t_total:.3f}** | **100%** |\n"
         )
 
-        # Resolve base directory — compatible with s3:// paths
         if record.output_path:
             base_dir = record.output_path.rsplit("/", 1)[0]
         else:
@@ -85,7 +69,6 @@ def main(record_path: str) -> None:
         profiling_uri = f"{base_dir}/profiling_{record.experiment_id[:8]}.md"
         record_uri    = f"{base_dir}/{record.experiment_id[:8]}.record.json"
 
-        # Write Markdown to S3
         try:
             chk_md = write_text(md_report, profiling_uri, content_type="text/markdown")
             record.add_artifact("profiling", chk_md)
@@ -93,7 +76,6 @@ def main(record_path: str) -> None:
         except Exception as e:
             record.add_log(f"Warning: Could not save profiling artifact: {e}")
 
-        # Write record JSON to S3
         try:
             json_data = record.model_dump_json(indent=2)
             chk_json  = write_text(json_data, record_uri, content_type="application/json")
@@ -112,7 +94,6 @@ def main(record_path: str) -> None:
         record.add_log(f"Failed: {exc}")
         raise
     finally:
-        # Always restore stdout — even on failure the parent process needs the record
         sys.stdout = _real_stdout
 
     _real_stdout.write(record.model_dump_json() + "\n")

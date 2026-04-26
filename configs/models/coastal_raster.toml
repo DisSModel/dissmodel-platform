@@ -1,9 +1,10 @@
 # configs/models/coastal_raster.toml
 
 [model]
+executor_module = "coastal_dynamics.executor"
 name    = "coastal_raster"
 class   = "coastal_raster"
-package = "git+https://github.com/LambdaGeo/coastal-dynamics"
+package = "git+https://github.com/dissmodel/coastal-dynamics"
 
 [model.parameters]
 end_time      = 88
