@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import redis
@@ -14,6 +14,8 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from minio import Minio
+
+from minio.error import S3Error
 
 from worker.api_registry import list_models, load_model_spec, start_sync_scheduler, sync_configs
 from worker.runner import build_record, build_record_inline, reproduce_experiment, run_experiment
@@ -304,6 +306,68 @@ async def upload_dataset(
         "size_mb":  round(len(content) / 1e6, 2),
     }
 
+
+import hmac
+import hashlib
+from urllib.parse import urlencode, quote
+from datetime import timezone
+
+def _presign_url(bucket: str, key: str, expires_seconds: int = 3600) -> str:
+    """Gera presigned URL sem conexão de rede — cálculo local puro."""
+    server_url = os.getenv("MINIO_SERVER_URL", "http://localhost:19000").rstrip("/")
+    access_key = os.getenv("MINIO_ACCESS_KEY", "inpe_admin")
+    secret_key = os.getenv("MINIO_SECRET_KEY", "inpe_secret_2024")
+
+    now        = datetime.now(timezone.utc)
+    date_stamp = now.strftime("%Y%m%d")
+    amz_date   = now.strftime("%Y%m%dT%H%M%SZ")
+    region     = "us-east-1"
+    service    = "s3"
+
+    credential = f"{access_key}/{date_stamp}/{region}/{service}/aws4_request"
+
+    params = {
+        "X-Amz-Algorithm":     "AWS4-HMAC-SHA256",
+        "X-Amz-Credential":    credential,
+        "X-Amz-Date":          amz_date,
+        "X-Amz-Expires":       str(expires_seconds),
+        "X-Amz-SignedHeaders": "host",
+    }
+
+    from urllib.parse import urlparse
+    host        = urlparse(server_url).netloc
+    canonical   = f"GET\n/{bucket}/{quote(key, safe='/')}\n{urlencode(sorted(params.items()))}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD"
+    string2sign = f"AWS4-HMAC-SHA256\n{amz_date}\n{date_stamp}/{region}/{service}/aws4_request\n{hashlib.sha256(canonical.encode()).hexdigest()}"
+
+    def _sign(key: bytes, msg: str) -> bytes:
+        return hmac.new(key, msg.encode(), hashlib.sha256).digest()
+
+    signing_key = _sign(
+        _sign(_sign(_sign(f"AWS4{secret_key}".encode(), date_stamp), region), service),
+        "aws4_request",
+    )
+    signature = hmac.new(signing_key, string2sign.encode(), hashlib.sha256).hexdigest()
+
+    params["X-Amz-Signature"] = signature
+    return f"{server_url}/{bucket}/{quote(key, safe='/')  }?{urlencode(sorted(params.items()))}"
+
+@app.get("/download", dependencies=AUTH)
+async def get_presigned_url(uri: str, expires_hours: int = 1):
+    if not uri.startswith("s3://"):
+        raise HTTPException(status_code=400, detail="URI deve começar com s3://")
+
+    clean = uri.removeprefix("s3://")
+    if "/" not in clean:
+        raise HTTPException(status_code=400, detail="Formato inválido — esperado s3://bucket/objeto")
+
+    bucket, key = clean.split("/", 1)
+
+    try:
+        url = _presign_url(bucket, key, expires_seconds=expires_hours * 3600)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"url": url, "expires_in_hours": expires_hours}
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 
