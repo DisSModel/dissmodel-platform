@@ -10,4 +10,4 @@ python-dotenv>=1.0.0,<2.0.0
 pydantic>=2.0.0,<3.0.0
 python-json-logger>=2.0.0,<3.0.0
 
-dissmodel>=0.4.0
+dissmodel>=0.4.1

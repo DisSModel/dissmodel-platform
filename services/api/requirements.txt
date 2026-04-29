@@ -15,4 +15,4 @@ requests>=2.31.0,<3.0.0
 
 apscheduler         
 tomli              
-dissmodel>=0.4.0
+dissmodel>=0.4.1

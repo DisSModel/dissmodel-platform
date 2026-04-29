@@ -4,6 +4,9 @@
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
 
+> ⚠️ **Disclaimer: MVP Phase**
+> While the DisSModel ecosystem is steadily growing, this platform is currently a **Minimum Viable Product (MVP)**. Security hardening and extreme performance efficiency are not the primary focus at this stage of development. Please use caution if deploying in production environments.
+
 Scalable execution platform for **DisSModel** (Distributed Spatial Simulation Model).
 
 An integrated environment for developing and running geospatial models, featuring JupyterLab, a REST API, and distributed workers.

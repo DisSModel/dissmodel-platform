@@ -118,6 +118,7 @@ def _to_response(record: ExperimentRecord) -> JobResponse:
         created_at    = record.created_at,
         output_path   = record.output_path,
         output_sha256 = record.output_sha256,
+        input_sha256  = record.source.checksum or None,
         logs          = record.logs,
     )
 
