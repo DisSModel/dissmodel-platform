@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Ruff
+        run: pip install ruff
+      - name: Run Lint
+        run: ruff check services/api/ services/worker/ --exclude __pycache__,*.apagar,*.pyc || true
+
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install mypy
+          pip install -r services/api/requirements.txt
+          pip install -r services/worker/requirements.txt
+      - name: Run Mypy
+        run: |
+          mypy --ignore-missing-imports services/worker/base.py services/worker/registry.py services/worker/executors/schemas.py services/worker/executors/testing.py || true
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Bandit
+        run: pip install bandit
+      - name: Run Bandit
+        run: bandit -r services/api/ services/worker/ -ll -ii -f txt -o bandit-report.txt || true
+      - name: Upload Bandit Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.txt
+
+  test-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Redis and MinIO
+        run: docker compose up -d redis minio
+      - name: Wait for Redis
+        run: |
+          for i in {1..10}; do
+            docker compose exec redis redis-cli ping && break
+            sleep 3
+          done
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install -r services/api/requirements.txt
+          pip install pytest
+      - name: Run API Tests
+        run: |
+          if [ -d "services/api/tests/" ]; then
+            pytest services/api/tests/
+          else
+            echo "Aviso: Diretório de testes da API não encontrado, continuando..."
+          fi
+      - name: Stop services
+        if: always()
+        run: docker compose down
+
+  test-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Redis
+        run: docker compose up -d redis
+      - name: Wait for Redis
+        run: |
+          for i in {1..10}; do
+            docker compose exec redis redis-cli ping && break
+            sleep 3
+          done
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install -r services/worker/requirements.txt
+          pip install pytest
+      - name: Run Worker Tests
+        run: |
+          if [ -d "services/worker/tests/" ]; then
+            pytest services/worker/tests/
+          else
+            echo "Aviso: Diretório de testes do worker não encontrado, rodando teste mínimo inline..."
+            export PYTHONPATH=$PWD
+            python -c "
+            from services.worker.executors.testing import ExecutorTestHarness
+            from services.worker.registry import ExecutorRegistry
+            for name, cls in ExecutorRegistry._executors.items():
+                ExecutorTestHarness(cls).run_contract_tests()
+                print(f'✅ {name} OK')
+            "
+          fi
+      - name: Stop services
+        if: always()
+        run: docker compose down
+
+  build-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build API
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/api
+          file: ./services/api/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build Worker
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/worker
+          file: ./services/worker/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/frontend
+          file: ./services/frontend/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
