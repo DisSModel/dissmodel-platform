@@ -90,20 +90,30 @@ jobs:
 
   unittest:
     needs: contract
-    if: hashFiles('services/worker/tests/') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check if tests exist
+        id: check_tests
+        run: |
+          if [ -d "services/worker/tests/" ] && [ "$(ls -A services/worker/tests/)" ]; then
+            echo "has_tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_tests=false" >> $GITHUB_OUTPUT
+          fi
       - name: Set up Python
+        if: steps.check_tests.outputs.has_tests == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
       - name: Install dependencies
+        if: steps.check_tests.outputs.has_tests == 'true'
         run: |
           pip install pytest
           pip install -r services/worker/requirements.txt
       - name: Run Unit Tests
+        if: steps.check_tests.outputs.has_tests == 'true'
         run: pytest services/worker/tests/
 
   pr-comment:

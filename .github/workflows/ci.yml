@@ -105,6 +105,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Create .env file
+        run: cp .env.example .env || touch .env
       - name: Start Redis
         run: docker compose up -d redis
       - name: Wait for Redis
