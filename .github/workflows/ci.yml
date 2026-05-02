@@ -135,12 +135,12 @@ jobs:
             echo "Aviso: Diretório de testes do worker não encontrado, rodando teste mínimo inline..."
             export PYTHONPATH=$PWD
             python -c "
-            from services.worker.executors.testing import ExecutorTestHarness
-            from services.worker.registry import ExecutorRegistry
-            for name, cls in ExecutorRegistry._executors.items():
-                ExecutorTestHarness(cls).run_contract_tests()
-                print(f'✅ {name} OK')
-            "
+from services.worker.executors.testing import ExecutorTestHarness
+from services.worker.registry import ExecutorRegistry
+for name, cls in ExecutorRegistry._executors.items():
+    ExecutorTestHarness(cls).run_contract_tests()
+    print(f'✅ {name} OK')
+"
           fi
       - name: Stop services
         if: always()
