@@ -11,7 +11,7 @@
 
 ```bash
 # Clonar
-git clone https://github.com/LambdaGeo/dissmodel-platform.git
+git clone https://github.com/DisSModel/dissmodel-platform.git
 cd dissmodel-platform
 
 # Configurar

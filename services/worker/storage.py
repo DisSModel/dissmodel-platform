@@ -6,7 +6,6 @@ import io
 import os
 
 from minio import Minio
-from minio.error import S3Error
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
@@ -35,7 +34,7 @@ def download_to_file(uri: str, dest: str) -> str:
 
     if uri.startswith("http://") or uri.startswith("https://"):
         import urllib.request
-        urllib.request.urlretrieve(uri, dest)
+        urllib.request.urlretrieve(uri, dest)  # nosec B310
         return dest
 
     return uri   # local path — return as-is
