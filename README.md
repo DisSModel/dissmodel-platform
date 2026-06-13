@@ -30,7 +30,7 @@ An integrated environment for developing and running geospatial models, featurin
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/LambdaGeo/dissmodel-platform.git
+git clone https://github.com/DisSModel/dissmodel-platform.git
 cd dissmodel-platform
 
 # 2. Configure environment variables
@@ -175,13 +175,13 @@ MIT License — see [LICENSE](LICENSE)
 
 ## 🙏 Acknowledgements
 
-- [DisSModel](https://github.com/LambdaGeo/dissmodel) — Core modelling library
+- [DisSModel](https://github.com/DisSModel/dissmodel) — Core modelling library
 - [Jupyter Project](https://jupyter.org/) — Development environment
 - [MinIO](https://min.io/) — S3-compatible object storage
 - [Pangeo](https://pangeo.io/) — Inspiration for cloud-native architecture
 
 ## 📞 Contact
 
-- **Organisation:** LambdaGeo / INPE
-- **Issues:** https://github.com/LambdaGeo/dissmodel-platform/issues
-- **Discussions:** https://github.com/LambdaGeo/dissmodel-platform/discussions
+- **Organisation:** DisSModel / INPE
+- **Issues:** https://github.com/DisSModel/dissmodel-platform/issues
+- **Discussions:** https://github.com/DisSModel/dissmodel-platform/discussions

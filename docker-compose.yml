@@ -27,7 +27,7 @@ services:
 
   jupyter:
     build:
-      context: ./services/frontend
+      context: ./services/jupyter
       dockerfile: Dockerfile
     container_name: dissmodel-jupyter
     restart: unless-stopped

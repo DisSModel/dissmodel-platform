@@ -31,7 +31,7 @@ jobs:
         run: pip install ruff
 
       - name: Run Lint
-        run: ruff check services/api/ services/worker/ --exclude __pycache__,*.apagar,*.pyc || true
+        run: ruff check services/api/ services/worker/ --exclude __pycache__,*.apagar,*.pyc
 
 
   typecheck:
@@ -52,7 +52,7 @@ jobs:
       - name: Run Mypy
         run: |
           # Focamos apenas na lógica da API e Worker da plataforma
-          mypy --ignore-missing-imports services/api/main.py services/worker/worker.py || true
+          PYTHONPATH=$PWD/services mypy --ignore-missing-imports services/api/main.py services/worker/worker.py
 
 
   security:
@@ -70,7 +70,7 @@ jobs:
         run: pip install bandit
 
       - name: Run Bandit
-        run: bandit -r services/api/ services/worker/ -ll -ii -f txt -o bandit-report.txt || true
+        run: bandit -r services/api/ services/worker/ -ll -ii -f txt -o bandit-report.txt
 
       - name: Upload Bandit Report
         uses: actions/upload-artifact@v4
@@ -193,11 +193,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build Frontend
+      - name: Build Jupyter
         uses: docker/build-push-action@v5
         with:
-          context: ./services/frontend
-          file: ./services/frontend/Dockerfile
+          context: ./services/jupyter
+          file: ./services/jupyter/Dockerfile
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max

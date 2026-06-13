@@ -19,7 +19,7 @@ services:
   #sudo chmod -R 775 ./workspace
   jupyter:
     build:
-      context: ./services/frontend
+      context: ./services/jupyter
       dockerfile: Dockerfile
     container_name: dissmodel-jupyter
     restart: unless-stopped
