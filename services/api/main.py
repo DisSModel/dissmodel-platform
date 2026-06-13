@@ -1,13 +1,15 @@
 # services/api/main.py
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
-import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote, urlencode
 
 import redis
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -15,10 +17,9 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from minio import Minio
 
-from minio.error import S3Error
 
-from worker.api_registry import list_models, load_model_spec, start_sync_scheduler, sync_configs
-from worker.runner import build_record, build_record_inline, reproduce_experiment, run_experiment
+from worker.api_registry import list_models, load_model_spec, sync_configs
+from worker.runner import build_record, build_record_inline
 from dissmodel.executor.schemas import ExperimentRecord, InlineJobRequest, JobRequest, JobResponse
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -308,11 +309,6 @@ async def upload_dataset(
     }
 
 
-import hmac
-import hashlib
-from urllib.parse import urlencode, quote
-from datetime import timezone
-
 def _presign_url(bucket: str, key: str, expires_seconds: int = 3600) -> str:
     """Gera presigned URL sem conexão de rede — cálculo local puro."""
     server_url = os.getenv("MINIO_URL", "http://localhost:19000").rstrip("/")
@@ -399,4 +395,4 @@ async def general_exception_handler(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)  # nosec B104

@@ -86,10 +86,10 @@ def main() -> None:
     while True:
         try:
             # brpop blocks up to 5s and respects queue priority order
-            result = redis_client.brpop(QUEUES, timeout=5)
+            result = redis_client.brpop(QUEUES, timeout=5)  # type: ignore[misc]
 
             if result:
-                _, experiment_id = result
+                _, experiment_id = result  # type: ignore[misc]
                 process_job(experiment_id)
 
         except KeyboardInterrupt:
