@@ -169,7 +169,7 @@ docker compose up --scale worker=5
 
 See [docs/developer-guide.md](docs/developer-guide.md) for more details.
 
-## Equipe PIBIC 2026
+## Equipe PIBIT 2026
 
 - **Hissa Barbara Oliveira** — Plano 3: Prototipagem de Plataforma Cloud-Native para Simulação Espacial Distribuída com DisSModel
 
