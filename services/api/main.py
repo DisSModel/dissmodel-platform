@@ -7,20 +7,23 @@ import io
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Optional
-from urllib.parse import quote, urlencode
+from datetime import UTC, datetime
+from typing import Annotated
+from urllib.parse import quote, urlencode, urlparse
 
 import redis
+from dissmodel.executor.schemas import (
+    ExperimentRecord,
+    InlineJobRequest,
+    JobRequest,
+    JobResponse,
+)
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
-from minio import Minio
-
-
 from worker.api_registry import list_models, load_model_spec, sync_configs
-from worker.runner import build_record, build_record_inline
-from dissmodel.executor.schemas import ExperimentRecord, InlineJobRequest, JobRequest, JobResponse
+from worker.runner import build_record, build_record_inline, build_reproduction
+from worker.storage import ensure_buckets, minio_client
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -31,16 +34,12 @@ logger = logging.getLogger(__name__)
 
 redis_client = redis.Redis(
     host             = os.getenv("REDIS_HOST", "redis"),
-    port             = int(os.getenv("REDIS_PORT", 6379)),
+    port             = int(os.getenv("REDIS_PORT", "6379")),
+    password         = os.getenv("REDIS_PASSWORD") or None,
     decode_responses = True,
 )
 
-minio_client = Minio(
-    os.getenv("MINIO_ENDPOINT", "minio:9000"),
-    access_key = os.getenv("MINIO_ACCESS_KEY", "inpe_admin"),
-    secret_key = os.getenv("MINIO_SECRET_KEY", "inpe_secret_2024"),
-    secure     = False,
-)
+QUEUES = ("queue:high", "queue:normal", "queue:low")
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -56,33 +55,12 @@ async def require_api_key(key: str = Depends(_API_KEY_HEADER)) -> str:
 
 # ── App lifecycle ─────────────────────────────────────────────────────────────
 
-_scheduler = None
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _scheduler
-
-    # Ensure MinIO buckets exist before accepting requests
-    _init_buckets()
-
-    # Start background sync of dissmodel-configs
-    #_scheduler = start_sync_scheduler(
-    #    interval_seconds=int(os.getenv("CONFIGS_SYNC_INTERVAL", 900))
-    #)
-    #logger.info("Config sync scheduler started")
-
+    # Ensure MinIO buckets exist before accepting requests. The configs
+    # repository is updated by the configs-sync sidecar, not by the API.
+    ensure_buckets()
     yield
-
-    if _scheduler:
-        _scheduler.shutdown()
-
-
-def _init_buckets() -> None:
-    for bucket in ("dissmodel-inputs", "dissmodel-outputs"):
-        if not minio_client.bucket_exists(bucket):
-            minio_client.make_bucket(bucket)
-            logger.info(f"Bucket created: {bucket}")
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -138,8 +116,8 @@ async def health_check():
     try:
         redis_client.ping()
         minio_client.bucket_exists("dissmodel-outputs")
-        return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
-    except Exception as exc:
+        return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
+    except Exception as exc:  # noqa: BLE001 — any failure means unhealthy
         raise HTTPException(status_code=503, detail=f"Service unhealthy: {exc}")
 
 
@@ -199,7 +177,7 @@ async def get_job(experiment_id: str):
 
 
 @app.get("/jobs", dependencies=AUTH)
-async def list_jobs(limit: int = 100, status: Optional[str] = None):
+async def list_jobs(limit: int = 100, status: str | None = None):
     """List experiments, optionally filtered by status."""
     records = []
     for key in redis_client.scan_iter("experiment:*"):
@@ -219,6 +197,8 @@ async def cancel_job(experiment_id: str):
     record = _load_record(experiment_id)
     if record.status in ("completed", "failed"):
         raise HTTPException(status_code=400, detail="Cannot cancel a completed or failed experiment")
+    for queue in QUEUES:
+        redis_client.lrem(queue, 0, experiment_id)
     record.status = "cancelled"
     record.add_log("Cancelled via API")
     _store_record(record)
@@ -231,23 +211,24 @@ async def cancel_job(experiment_id: str):
 async def reproduce(experiment_id: str):
     """
     Re-run an experiment from its stored snapshot.
-    Uses the original resolved_spec — independent of current registry state.
+
+    Uses the original resolved_spec, input and parameters — independent
+    of the current registry state — and records the dissmodel version
+    installed now. When the run ends, the worker compares its output with
+    the original and stores the result in ``metrics['reproduction']``
+    (see GET /experiments/{id}).
     """
-    original = _load_record(experiment_id)
-    new_record = ExperimentRecord(
-        model_name    = original.model_name,
-        model_commit  = original.model_commit,
-        code_version  = original.code_version,
-        resolved_spec = original.resolved_spec,
-        source        = original.source.model_copy(),
-        input_format  = original.input_format,
-        column_map    = original.column_map,
-        band_map      = original.band_map,
-        parameters    = original.parameters,
-    )
-    new_record.add_log(f"Reproducing experiment={experiment_id}")
+    original   = _load_record(experiment_id)
+    new_record = build_reproduction(original)
     _enqueue(new_record)
     return _to_response(new_record)
+
+
+@app.get("/experiments/{experiment_id}", dependencies=AUTH)
+async def get_experiment(experiment_id: str):
+    """Full ExperimentRecord: provenance, artifacts, metrics and logs."""
+    record = _load_record(experiment_id)
+    return {**record.model_dump(mode="json"), "output_sha256": record.output_sha256}
 
 
 @app.post("/experiments/{experiment_id}/publish", dependencies=AUTH)
@@ -270,8 +251,11 @@ async def publish(experiment_id: str):
         "band_map":      record.band_map,
         "parameters":    record.parameters,
         "resolved_spec": record.resolved_spec,
+        "period":        record.period,
         "output_path":   record.output_path,
         "output_sha256": record.output_sha256,
+        "artifacts":     record.artifacts,
+        "metrics":       record.metrics,
         "logs":          record.logs,
         "note":          "Zenodo deposit not yet implemented — save this JSON for reproducibility",
     }
@@ -281,12 +265,10 @@ async def publish(experiment_id: str):
 
 @app.post("/data/upload", dependencies=AUTH)
 async def upload_dataset(
-    file:  UploadFile = File(...),
-    label: str        = Form(...),
+    file:  Annotated[UploadFile, File()],
+    label: Annotated[str, Form()],
 ):
     """Upload a dataset to MinIO. For large files, use mc directly."""
-    import hashlib
-
     content  = await file.read()
     checksum = hashlib.sha256(content).hexdigest()
     path     = f"inputs/{label}/{file.filename}"
@@ -315,7 +297,7 @@ def _presign_url(bucket: str, key: str, expires_seconds: int = 3600) -> str:
     access_key = os.getenv("MINIO_ACCESS_KEY", "inpe_admin")
     secret_key = os.getenv("MINIO_SECRET_KEY", "inpe_secret_2024")
 
-    now        = datetime.now(timezone.utc)
+    now        = datetime.now(UTC)
     date_stamp = now.strftime("%Y%m%d")
     amz_date   = now.strftime("%Y%m%dT%H%M%SZ")
     region     = "us-east-1"
@@ -331,7 +313,6 @@ def _presign_url(bucket: str, key: str, expires_seconds: int = 3600) -> str:
         "X-Amz-SignedHeaders": "host",
     }
 
-    from urllib.parse import urlparse
     host        = urlparse(server_url).netloc
     canonical   = f"GET\n/{bucket}/{quote(key, safe='/')}\n{urlencode(sorted(params.items()))}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD"
     string2sign = f"AWS4-HMAC-SHA256\n{amz_date}\n{date_stamp}/{region}/{service}/aws4_request\n{hashlib.sha256(canonical.encode()).hexdigest()}"
@@ -362,7 +343,7 @@ async def get_presigned_url(uri: str, expires_hours: int = 1):
     try:
         url = _presign_url(bucket, key, expires_seconds=expires_hours * 3600)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     return {"url": url, "expires_in_hours": expires_hours}
 
@@ -370,12 +351,14 @@ async def get_presigned_url(uri: str, expires_hours: int = 1):
 
 @app.post("/admin/sync", dependencies=AUTH)
 async def admin_sync():
-    """Force an immediate git pull of dissmodel-configs."""
-    try:
-        output = sync_configs()
-        return {"message": "Sync completed", "git_output": output}
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    """
+    Try a ``git pull`` of dissmodel-configs and report the commit new jobs will record.
+
+    In the Docker stack the checkout is read-only here and is updated by
+    the configs-sync sidecar; specs are read from disk on every request,
+    so a pull by the sidecar takes effect immediately.
+    """
+    return sync_configs()
 
 
 # ── Error handlers ────────────────────────────────────────────────────────────
