@@ -35,7 +35,6 @@ services:
       - "${JUPYTER_PORT:-8888}:8888"
     volumes:
       - ./workspace:/home/jovyan/work
-      - ../dissmodel:/opt/dissmodel
       - ./data/inputs:/data/inputs:ro
       - ./data/outputs:/data/outputs
       - ./examples:/examples:ro
@@ -70,7 +69,6 @@ services:
       - configs-data:/configs:ro        # <- era ./configs:/configs:ro
       - ./services/worker:/app/worker
       - ./services/api:/app
-      - ../dissmodel:/opt/dissmodel
     environment:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
@@ -81,6 +79,7 @@ services:
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
       - API_KEYS=${API_KEYS:-dev-key}
       - CONFIGS_PATH=/configs
+      - DISSMODEL_OUTPUT_ROOT=${DISSMODEL_OUTPUT_ROOT:-s3://dissmodel-outputs/experiments}
       - CONFIGS_SYNC_INTERVAL=${CONFIGS_SYNC_INTERVAL:-900}
     env_file:
       - .env
@@ -118,6 +117,7 @@ services:
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
       - SAL_ANIMATE=0
       - CONFIGS_PATH=/configs
+      - DISSMODEL_OUTPUT_ROOT=${DISSMODEL_OUTPUT_ROOT:-s3://dissmodel-outputs/experiments}
     env_file:
       - .env
     networks:

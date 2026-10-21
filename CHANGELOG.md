@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Brings the platform in line with DisSModel 0.6.6, DisSCube 0.6.0 and DisSLUCC 0.5.0.
+
+### Fixed
+
+- Jobs that finish in under 1 ms no longer fail in the profiling report after writing their output.
+- Every record gets an `output_path` under `DISSMODEL_OUTPUT_ROOT` (default `s3://dissmodel-outputs/experiments/<id>/`); outputs were written inside the worker container and lost on restart.
+- The profiling report and the record JSON are saved next to the output (they were silently dropped).
+- Cancelled jobs are removed from the queue and skipped by the worker.
+- `/reproduce` records the dissmodel version installed now instead of copying the original one.
+- Model specs are read from disk on every request; the `lru_cache` was never cleared after the sidecar's `git pull`.
+- `MINIO_SECURE=false` no longer turns TLS on.
+
+### Added
+
+- `GET /experiments/{id}` returns the full `ExperimentRecord`.
+- Reproductions are compared with the original when they finish (`metrics['reproduction']`): file checksum and, for GeoTIFF, SHA-256 of the decoded bands.
+- Each run records Python, the executor and the versions of the packages involved (`metrics['environment']`); an unpinned `model.package` is flagged.
+- Worker and API test suites (`services/*/tests`), run in CI without Docker.
+- `disslucc` in the worker and the Jupyter image; `disscube` in the Jupyter image.
+
+### Changed
+
+- `dissmodel` pinned to 0.6.6 in all images (was `>=0.5.0`).
+- `CONFIGS_PATH` is read from the environment.
+
+### Removed
+
+- `entrypoint_install.sh` scripts that installed `dissmodel` from an old branch of `LambdaGeo/dissmodel`; the `../dissmodel` volume mounts that went with them.
+- APScheduler (the configs-sync sidecar updates the registry) and the unused Intake catalog loader.
+
 ## [0.1.0] - 2026-06-13
 
 First public release of the DisSModel Platform MVP.
