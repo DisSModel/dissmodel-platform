@@ -61,9 +61,9 @@ curl -X POST http://localhost:8000/data/upload \
   -F "label=baseline"
 ```
 
-## Intake Catalogs
+## Intake Catalogs (planned)
 
-The platform supports `Intake` for structured data access. If a `catalog.yaml` exists in the `dissmodel-configs` repository, executors can use it to load datasets by name instead of URI.
+Not implemented. An Intake catalog in `dissmodel-configs` was planned so that executors could load datasets by name; the loader was never wired in and has been removed. Jobs reference inputs by URI (`s3://`, `http(s)://` or a local path). The example below shows the intended format only.
 
 **Example `catalog.yaml`:**
 ```yaml

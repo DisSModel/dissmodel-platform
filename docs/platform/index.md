@@ -1,6 +1,6 @@
 # DisSModel Platform: Overview
 
-The **DisSModel Platform** is a FastAPI-powered service designed for the execution, tracking, and reproduction of Land Use and Cover Change (LUCC) simulations. Built upon the `dissmodel` core framework and integrated with the Pangeo ecosystem, it provides a robust infrastructure for scientific reproducibility, enabling researchers to transition seamlessly from local exploration in Jupyter notebooks to large-scale production runs.
+The **DisSModel Platform** is a FastAPI-powered service designed for the execution, tracking, and reproduction of Land Use and Cover Change (LUCC) simulations. Built upon the `dissmodel` core framework, it provides a robust infrastructure for scientific reproducibility, enabling researchers to transition seamlessly from local exploration in Jupyter notebooks to large-scale production runs.
 
 ## Architecture Layers
 
@@ -17,7 +17,7 @@ The **DisSModel Platform** is a FastAPI-powered service designed for the executi
                │ (Redis Queue)                 │
                ▼                               │
 ┌───────────────────────────┐                  │
-│       Dask Worker         │──────────────────┘
+│       Worker (Redis)      │──────────────────┘
 │  (Generic Job Runner)     │
 └──────────────┬────────────┘
                │ (Subprocess)
@@ -37,14 +37,9 @@ The **DisSModel Platform** is a FastAPI-powered service designed for the executi
 | `dissmodel-configs` | Registry | Git-versioned TOML specs and calibrated coefficients. |
 | `dissmodel-executors` | Plugins | Collection of concrete `ModelExecutor` implementations. |
 
-## Comparison
+## Scope
 
-| Feature | DisSModel Platform | LuccME / TerraME | Pure Pangeo |
-|---|---|---|---|
-| **Reproducibility** | Native (ExperimentRecord) | File-based | Manual / Scripted |
-| **Scaling** | Dask-ready Workers | Shared Memory / Cluster | Highly Scalable |
-| **Interface** | REST API / Python | Lua / CLI | Python |
-| **Versioning** | Git-based TOML | Manual | Manual |
+The platform does not integrate with Pangeo (Dask, Intake, Zarr). Scaling means running more workers on the Redis queue (`docker compose up --scale worker=N`); each job runs on one worker.
 
 ## Documentation Sections
 

@@ -4,6 +4,8 @@
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
 
+> **Status: optional and experimental.** The platform runs DisSModel executors behind a REST API and keeps an `ExperimentRecord` for each run. Reproducing DisSModel, DisSCube and DisSLUCC results does not depend on it: the packages run on their own from the command line, with pinned versions and the records they write (see the Open LUCC workflow). The platform is a convenience for running jobs on a shared server.
+
 > ⚠️ **Disclaimer: MVP Phase**
 > While the DisSModel ecosystem is steadily growing, this platform is currently a **Minimum Viable Product (MVP)**. Security hardening and extreme performance efficiency are not the primary focus at this stage of development. Please use caution if deploying in production environments.
 

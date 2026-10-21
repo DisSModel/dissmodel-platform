@@ -67,7 +67,7 @@ A plataforma DisSModel é uma arquitetura baseada em microsserviços containeriz
 
 - Workers podem ser escalados horizontalmente
 - `docker compose up --scale worker=5`
-- Em produção (Fase 2): Kubernetes + Dask
+- Em produção (Fase 2, planejado, não implementado): Kubernetes + Dask
 
 ## Segurança
 

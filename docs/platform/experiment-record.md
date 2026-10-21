@@ -18,7 +18,7 @@ The `ExperimentRecord` is the foundational object for reproducibility in the Dis
 | `code_version` | `str` | Version of the `dissmodel` library used. |
 | `resolved_spec` | `dict` | Full snapshot of the TOML configuration (including defaults). |
 | `source` | `DataSource` | Object containing `uri`, `type` (s3/http/local), and `checksum`. |
-| `input_format` | `str` | Format of the input data (`geotiff`, `vector`, `zarr`). |
+| `input_format` | `str` | Format of the input data (`tiff`, `vector`, `auto`). |
 | `column_map` | `dict` | (Vector only) Mapping from canonical names to dataset columns. |
 | `band_map` | `dict` | (Raster only) Mapping from canonical names to TIFF bands. |
 | `parameters` | `dict` | Final resolved parameters (TOML defaults + request overrides). |

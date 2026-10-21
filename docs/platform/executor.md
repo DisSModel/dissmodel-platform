@@ -86,7 +86,7 @@ The following hierarchy represents the standard executors available:
 
 | Feature | `CoastalTiffExecutor` | `CoastalVectorExecutor` |
 |---|---|---|
-| **Data Structure** | Xarray / Dask | GeoDataFrame (Pandas-like) |
+| **Data Structure** | `RasterBackend` (NumPy arrays) | GeoDataFrame (Pandas-like) |
 | **Mapping** | `band_map` | `column_map` |
 | **Connectivity** | 4/8-way Adjacency | Topology-based (libpysal) |
 | **Scaling** | Pixel-based (Chunked) | Entity-based (Vectorized) |

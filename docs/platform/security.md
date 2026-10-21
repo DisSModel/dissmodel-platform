@@ -60,7 +60,7 @@ All Pull Requests to the `dissmodel-executors` repository undergo automated secu
 Since workers run simulations as subprocesses, they have limited access to the system:
 *   **Read-only Root:** The worker filesystem is mostly read-only.
 *   **Scratch Space:** Each job is assigned a unique temporary directory for intermediate files.
-*   **Resource Limits:** CPU and Memory limits are enforced via Docker/Dask.
+*   **Resource Limits:** CPU and Memory limits are enforced via Docker (`deploy.resources` in `docker-compose.yml`).
 
 !!! danger "Credential Protection"
     Never commit API keys or `.env` files to git. Use the `X-API-Key` header exclusively for authentication. If a key is compromised, rotate it immediately in the platform's environment configuration.

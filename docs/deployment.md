@@ -43,13 +43,9 @@ docker compose logs -f
 docker compose up -d --scale worker=5
 ```
 
-## Deploy com Kubernetes (Fase 2)
+## Kubernetes
 
-```bash
-# Usar Helm charts do Pangeo
-helm repo add pangeo https://pangeo-data.github.io/helm-charts/
-helm install dissmodel pangeo/pangeo
-```
+Não há manifests nem chart para Kubernetes. A plataforma é distribuída apenas com Docker Compose.
 
 ## Backup
 
