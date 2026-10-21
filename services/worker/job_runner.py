@@ -1,103 +1,161 @@
 # services/worker/job_runner.py
+"""
+Subprocess entry point: run one ExperimentRecord and print it as JSON.
+
+Called by ``worker.runner.run_experiment`` as
+``python -m worker.job_runner <record.json>``. Anything the executor
+prints goes to stderr; stdout carries only the final record.
+"""
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import os
+import platform
+import posixpath
 import sys
 from pathlib import Path
 
+# Distributions whose versions are recorded with every run, besides the
+# one that provides the executor.
+RECORDED_DISTRIBUTIONS = ("dissmodel", "disscube", "disslucc", "numpy", "rasterio")
+
+
+def artifact_dir(output_path: str | None) -> str:
+    """
+    Folder for the side artifacts (profiling report, record JSON): the
+    folder of ``output_path``, or ``.`` when it has none.
+
+    The earlier code took ``output_path.rsplit("/", 1)[0]``, which for a
+    bare file name returns the file name itself, so both artifacts were
+    written "inside" the output file and silently lost.
+    """
+    if not output_path:
+        return "."
+    return posixpath.dirname(output_path) or "."
+
+
+def _pct(part: float, total: float) -> str:
+    # Fast executors finish in less than the 1 ms the timings are rounded
+    # to; dividing by that zero used to fail the job after it had already
+    # written its output.
+    return f"{(part / total) * 100:.1f}%" if total > 0 else "—"
+
+
+def profiling_report(name: str, record, timings: dict[str, float]) -> str:
+    rows = [
+        ("Validate", timings["time_validate_sec"]),
+        ("Load",     timings["time_load_sec"]),
+        ("Run",      timings["time_run_sec"]),
+        ("Save",     timings["time_save_sec"]),
+    ]
+    total = timings["time_total_sec"]
+    lines = [
+        f"# Profiling Report: {name}\n",
+        f"**Experiment ID:** `{record.experiment_id}`",
+        f"**Date:** `{record.created_at.isoformat()}`",
+        "**Execution Node:** `Cloud Worker`\n",
+        "## Execution Times\n",
+        "| Phase | Time (seconds) | % of Total |",
+        "|---|---|---|",
+    ]
+    lines += [f"| **{label}** | {t:.3f} | {_pct(t, total)} |" for label, t in rows]
+    lines.append(f"| **Total** | **{total:.3f}** | **100%** |")
+    return "\n".join(lines) + "\n"
+
+
+def _distribution_of(executor_cls) -> str | None:
+    """Name of the installed distribution that provides the executor's module, if any."""
+    top = executor_cls.__module__.split(".", 1)[0]
+    dists = importlib.metadata.packages_distributions().get(top, [])
+    return dists[0] if dists else None
+
+
+def environment(executor_cls) -> dict:
+    """Versions of Python and of the packages that took part in the run."""
+    names = list(RECORDED_DISTRIBUTIONS)
+    dist = _distribution_of(executor_cls)
+    if dist and dist not in names:
+        names.append(dist)
+
+    versions = {}
+    for name in names:
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return {
+        "python":            platform.python_version(),
+        "executor":          f"{executor_cls.__module__}.{executor_cls.__qualname__}",
+        "executor_package":  dist,
+        "packages":          versions,
+    }
+
 
 def main(record_path: str) -> None:
-    _real_stdout = os.fdopen(os.dup(1), "w")
-    sys.stdout   = sys.stderr
+    real_stdout = os.fdopen(os.dup(1), "w")
+    sys.stdout  = sys.stderr
 
-    from dissmodel.executor.runner   import execute_lifecycle
     from dissmodel.executor.registry import ExecutorRegistry
-    from dissmodel.executor.schemas  import ExperimentRecord
-    from dissmodel.io._utils         import write_text
+    from dissmodel.executor.runner import execute_lifecycle
+    from dissmodel.executor.schemas import ExperimentRecord
+    from dissmodel.io._utils import write_text
 
-    record  = ExperimentRecord.model_validate_json(Path(record_path).read_text())
-    spec    = record.resolved_spec
-    package = spec.get("model", {}).get("package", "")
-    module  = spec.get("model", {}).get("executor_module", "")  # ← novo
+    record = ExperimentRecord.model_validate_json(Path(record_path).read_text())
+    model  = record.resolved_spec.get("model", {})
 
-    if package:
-        import subprocess
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", package],
-            check=True, capture_output=True,
-        )
-
+    # The package itself is installed by the parent process (runner._ensure_package).
+    module = model.get("executor_module", "")
     if module:
-        importlib.import_module(module)                          # ← novo, sem try/except
-    
-    import worker.executors  # noqa: F401
+        importlib.import_module(module)
 
-    model_class  = spec.get("model", {}).get("class")
-    executor_cls = ExecutorRegistry.get(model_class)
+    import worker.executors  # noqa: F401  (executors bundled with the platform)
+
+    executor_cls = ExecutorRegistry.get(model.get("class"))
     executor     = executor_cls()
 
     try:
+        record.metrics["environment"] = environment(executor_cls)
         record, timings = execute_lifecycle(executor, record)
 
-        t_val   = timings["time_validate_sec"]
-        t_load  = timings["time_load_sec"]
-        t_run   = timings["time_run_sec"]
-        t_save  = timings["time_save_sec"]
-        t_total = timings["time_total_sec"]
+        base_dir      = artifact_dir(record.output_path)
+        short_id      = record.experiment_id[:8]
+        profiling_uri = f"{base_dir}/profiling_{short_id}.md"
+        record_uri    = f"{base_dir}/{short_id}.record.json"
 
-        md_report = (
-            f"# Profiling Report: {getattr(executor_cls, 'name', 'Model')}\n\n"
-            f"**Experiment ID:** `{record.experiment_id}`\n"
-            f"**Date:** `{record.created_at.isoformat()}`\n"
-            f"**Execution Node:** `Cloud Worker`\n\n"
-            "## Execution Times\n\n"
-            "| Phase | Time (seconds) | % of Total |\n"
-            "|---|---|---|\n"
-            f"| **Validate** | {t_val:.3f}   | {(t_val   / t_total) * 100:.1f}% |\n"
-            f"| **Load**     | {t_load:.3f}  | {(t_load  / t_total) * 100:.1f}% |\n"
-            f"| **Run**      | {t_run:.3f}   | {(t_run   / t_total) * 100:.1f}% |\n"
-            f"| **Save**     | {t_save:.3f}  | {(t_save  / t_total) * 100:.1f}% |\n"
-            f"| **Total**    | **{t_total:.3f}** | **100%** |\n"
-        )
-
-        if record.output_path:
-            base_dir = record.output_path.rsplit("/", 1)[0]
-        else:
-            base_dir = "."
-
-        profiling_uri = f"{base_dir}/profiling_{record.experiment_id[:8]}.md"
-        record_uri    = f"{base_dir}/{record.experiment_id[:8]}.record.json"
-
+        report = profiling_report(getattr(executor_cls, "name", "Model"), record, timings)
         try:
-            chk_md = write_text(md_report, profiling_uri, content_type="text/markdown")
-            record.add_artifact("profiling", chk_md)
+            record.add_artifact("profiling", write_text(report, profiling_uri, content_type="text/markdown"))
             record.add_log(f"Saved profiling artifact → {profiling_uri}")
-        except Exception as e:
-            record.add_log(f"Warning: Could not save profiling artifact: {e}")
-
-        try:
-            json_data = record.model_dump_json(indent=2)
-            chk_json  = write_text(json_data, record_uri, content_type="application/json")
-            record.add_artifact("record_json", chk_json)
-            record.add_log(f"Saved record JSON → {record_uri}")
-        except Exception as e:
-            record.add_log(f"Warning: Could not save record JSON: {e}")
+        except Exception as exc:  # noqa: BLE001 — a side artifact must not fail a finished run
+            record.add_log(f"Warning: Could not save profiling artifact: {exc}")
 
         record.add_log(
-            f"Completed — val={t_val:.2f}s | load={t_load:.2f}s | "
-            f"run={t_run:.2f}s | save={t_save:.2f}s | total={t_total:.2f}s"
+            "Completed — "
+            f"val={timings['time_validate_sec']:.2f}s | load={timings['time_load_sec']:.2f}s | "
+            f"run={timings['time_run_sec']:.2f}s | save={timings['time_save_sec']:.2f}s | "
+            f"total={timings['time_total_sec']:.2f}s"
         )
+
+        # The record JSON is written last so that it includes every log line
+        # above. It cannot contain its own checksum, so that one is only in
+        # the record returned to the worker.
+        try:
+            json_data = record.model_dump_json(indent=2)
+            record.add_artifact("record_json", write_text(json_data, record_uri, content_type="application/json"))
+            record.add_log(f"Saved record JSON → {record_uri}")
+        except Exception as exc:  # noqa: BLE001 — a side artifact must not fail a finished run
+            record.add_log(f"Warning: Could not save record JSON: {exc}")
 
     except Exception as exc:
         record.status = "failed"
         record.add_log(f"Failed: {exc}")
         raise
     finally:
-        sys.stdout = _real_stdout
+        sys.stdout = real_stdout
 
-    _real_stdout.write(record.model_dump_json() + "\n")
-    _real_stdout.flush()
+    real_stdout.write(record.model_dump_json() + "\n")
+    real_stdout.flush()
 
 
 if __name__ == "__main__":

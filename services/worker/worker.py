@@ -1,4 +1,5 @@
 # services/worker/worker.py
+"""Redis queue consumer: takes experiment ids and runs them."""
 from __future__ import annotations
 
 import logging
@@ -6,9 +7,10 @@ import os
 import time
 
 import redis
-
 from dissmodel.executor.schemas import ExperimentRecord
-from worker.runner import run_experiment
+
+from worker.compare import compare_outputs, summary
+from worker.runner import REPRODUCES_KEY, run_experiment
 from worker.storage import ensure_buckets
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -28,7 +30,8 @@ QUEUES    = ["queue:high", "queue:normal", "queue:low"]
 
 redis_client = redis.Redis(
     host             = os.getenv("REDIS_HOST", "redis"),
-    port             = int(os.getenv("REDIS_PORT", 6379)),
+    port             = int(os.getenv("REDIS_PORT", "6379")),
+    password         = os.getenv("REDIS_PASSWORD") or None,
     decode_responses = True,
 )
 
@@ -47,8 +50,23 @@ def _save_record(record: ExperimentRecord) -> None:
 
 # ── Job processing ────────────────────────────────────────────────────────────
 
+def _compare_with_original(record: ExperimentRecord) -> None:
+    """For a reproduction, store the comparison with the original run on the record."""
+    original_id = record.metrics.get(REPRODUCES_KEY)
+    if not original_id or record.status != "completed":
+        return
+    try:
+        original = _load_record(original_id)
+    except ValueError as exc:
+        record.add_log(f"Warning: cannot compare with the original: {exc}")
+        return
+    result = compare_outputs(original, record)
+    record.metrics["reproduction"] = result
+    record.add_log(summary(result))
+
+
 def process_job(experiment_id: str) -> None:
-    """Dequeue and execute a single experiment."""
+    """Run one queued experiment and store the updated record."""
     logger.info(f"[{WORKER_ID}] Processing experiment={experiment_id}")
 
     try:
@@ -57,48 +75,53 @@ def process_job(experiment_id: str) -> None:
         logger.error(f"[{WORKER_ID}] {exc}")
         return
 
+    # DELETE /job/{id} only marks the record; the id is still in the queue.
+    if record.status == "cancelled":
+        logger.info(f"[{WORKER_ID}] Skipping cancelled experiment={experiment_id}")
+        return
+
     try:
         completed = run_experiment(record)
-        _save_record(completed)
-        logger.info(
-            f"[{WORKER_ID}] Completed experiment={experiment_id} "
-            f"output={completed.output_path}"
-        )
-
-    except Exception as exc:
-        # run_experiment already sets status="failed" and logs the error
-        # on the record — just persist and move on
+    except Exception as exc:  # noqa: BLE001 — any failure is recorded on the job
         record.status = "failed"
+        # The full stderr is already in the logs (run_experiment); keep the last line here.
+        lines = str(exc).strip().splitlines()
+        record.add_log(f"Failed: {lines[-1] if lines else repr(exc)}")
         _save_record(record)
         logger.error(f"[{WORKER_ID}] Failed experiment={experiment_id}: {exc}")
+        return
+
+    _compare_with_original(completed)
+    _save_record(completed)
+    logger.info(
+        f"[{WORKER_ID}] Completed experiment={experiment_id} output={completed.output_path}"
+    )
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
     logger.info(f"Worker {WORKER_ID} starting")
-    logger.info(f"Redis: {os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', 6379)}")
+    logger.info(f"Redis: {os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}")
     logger.info(f"Queues: {QUEUES}")
 
-    # Ensure MinIO buckets exist before processing any job
     ensure_buckets()
 
     while True:
         try:
-            # brpop blocks up to 5s and respects queue priority order
+            # brpop blocks up to 5 s and respects queue priority order
             result = redis_client.brpop(QUEUES, timeout=5)  # type: ignore[misc]
-
             if result:
                 _, experiment_id = result  # type: ignore[misc]
-                process_job(experiment_id)
+                process_job(str(experiment_id))
 
         except KeyboardInterrupt:
             logger.info(f"Worker {WORKER_ID} shutting down")
             break
 
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — keep the consumer alive
             logger.error(f"[{WORKER_ID}] Unexpected error: {exc}")
-            time.sleep(5)   # back off before retrying
+            time.sleep(5)
 
 
 if __name__ == "__main__":

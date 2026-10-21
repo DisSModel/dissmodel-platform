@@ -1,7 +1,15 @@
 # services/worker/runner.py
+"""
+Build ExperimentRecords from API requests and run them in a subprocess.
+
+Every record gets an ``output_path`` under ``DISSMODEL_OUTPUT_ROOT``
+(``s3://dissmodel-outputs/experiments`` by default), one folder per
+experiment. Without it, executors fall back to a file name relative to
+the worker's working directory, which lives inside the container and is
+lost on restart.
+"""
 from __future__ import annotations
 
-import importlib
 import importlib.metadata
 import logging
 import os
@@ -9,77 +17,84 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from pathlib import Path
 
-from dissmodel.executor.registry import ExecutorRegistry
-from dissmodel.executor.schemas  import ExperimentRecord, InlineJobRequest, JobRequest
+from dissmodel.executor.schemas import ExperimentRecord, InlineJobRequest, JobRequest
 
-CONFIGS_PATH = Path("/configs")
-logger       = logging.getLogger(__name__)
+from worker.api_registry import configs_head, load_model_spec
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_OUTPUT_ROOT = "s3://dissmodel-outputs/experiments"
+
+# Key in record.metrics that links a reproduction to the experiment it repeats.
+REPRODUCES_KEY = "reproduces"
 
 
-# ── Registry helpers ──────────────────────────────────────────────────────────
-
-def _git_head() -> str:
-    """Return current HEAD hash of the configs repo, or 'local-dev' if git is missing."""
-    try:
-        if not (CONFIGS_PATH / ".git").exists():
-            return "local-dev"
-        return subprocess.check_output(
-            ["git", "-C", str(CONFIGS_PATH), "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
-
+# ── Provenance helpers ────────────────────────────────────────────────────────
 
 def _code_version() -> str:
-    """Return installed dissmodel version, or 'dev' if not installed."""
+    """Installed dissmodel version, or 'dev' if not installed."""
     try:
         return importlib.metadata.version("dissmodel")
     except importlib.metadata.PackageNotFoundError:
         return "dev"
 
 
-def _load_spec(model_name: str) -> dict:
+def output_root() -> str:
+    return os.getenv("DISSMODEL_OUTPUT_ROOT", DEFAULT_OUTPUT_ROOT).rstrip("/")
+
+
+def default_output_path(record: ExperimentRecord) -> str:
     """
-    Load and return the TOML spec for a registered model.
-    Raises FileNotFoundError if the model is not in the registry.
+    ``<root>/<experiment_id>/output<suffix>``.
+
+    The suffix comes from ``model.output_suffix`` in the spec
+    (default ``.tif``, which is what the raster executors write).
     """
-    from worker.api_registry import load_model_spec
-    return load_model_spec(model_name)
+    suffix = record.resolved_spec.get("model", {}).get("output_suffix", ".tif")
+    return f"{output_root()}/{record.experiment_id}/output{suffix}"
 
 
 def _merge_parameters(resolved_spec: dict, overrides: dict) -> dict:
-    """
-    Merge TOML defaults with per-request overrides.
-    Request parameters always win.
-    """
+    """TOML defaults merged with per-request overrides; the request wins."""
     defaults = resolved_spec.get("model", {}).get("parameters", {})
     return {**defaults, **overrides}
 
 
 def _infer_source_type(uri: str) -> str:
-    """Infer DataSource.type from URI scheme."""
+    """Infer DataSource.type from the URI scheme."""
     if uri.startswith("s3://"):
         return "s3"
-    if uri.startswith("http://") or uri.startswith("https://"):
+    if uri.startswith(("http://", "https://")):
         return "http"
     return "local"
+
+
+def _package_is_pinned(package: str) -> bool:
+    """
+    True when the package spec names one exact version.
+
+    ``name==1.2.3`` and ``git+https://...@<40-hex commit>`` are pinned;
+    a branch, a tag-less git URL, a range or a local path are not, and
+    the record then cannot say which code ran.
+    """
+    if "==" in package:
+        return True
+    if package.startswith("git+") and "@" in package:
+        ref = package.rsplit("@", 1)[1]
+        return len(ref) == 40 and all(c in "0123456789abcdef" for c in ref.lower())
+    return False
 
 
 # ── Package installation ──────────────────────────────────────────────────────
 
 def _ensure_package(spec: dict) -> None:
     """
-    Install the model package declared in the spec.
+    Install the model package declared in the spec (``model.package``).
 
-    Supports three URI schemes:
-      PyPI:    "coastal-dynamics==0.1.0"
-      GitHub:  "git+https://github.com/org/repo@branch"
-      Local:   "/opt/coastal-dynamics"  (editable install — development only)
-
-    No-op if 'package' field is absent from the spec.
+    Supports ``name==1.2.3`` (PyPI), ``git+https://github.com/org/repo@<commit>``
+    and a local path (editable install, development only). No-op if the
+    field is absent.
     """
     package = spec.get("model", {}).get("package")
     if not package:
@@ -90,12 +105,10 @@ def _ensure_package(spec: dict) -> None:
     if package.startswith("/"):
         cmd = [sys.executable, "-m", "pip", "install", "-e", package, "--quiet"]
     else:
-        cmd = [sys.executable, "-m", "pip", "install",
-               package, "--quiet", "--no-cache-dir"]
+        cmd = [sys.executable, "-m", "pip", "install", package, "--quiet", "--no-cache-dir"]
 
     try:
         subprocess.check_call(cmd)
-        logger.info(f"Package installed: {package}")
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             f"Failed to install package '{package}': {exc}\n"
@@ -103,18 +116,32 @@ def _ensure_package(spec: dict) -> None:
         ) from exc
 
 
-# ── Record factory ────────────────────────────────────────────────────────────
+# ── Record factories ──────────────────────────────────────────────────────────
+
+def _finish_record(record: ExperimentRecord, input_dataset: str) -> ExperimentRecord:
+    record.source.uri  = input_dataset
+    record.source.type = _infer_source_type(input_dataset)
+    record.output_path = default_output_path(record)
+
+    package = record.resolved_spec.get("model", {}).get("package")
+    if package and not _package_is_pinned(package):
+        record.add_log(
+            f"Warning: model.package '{package}' is not pinned to one version; "
+            f"the installed version is recorded in metrics['environment']"
+        )
+    return record
+
 
 def build_record(req: JobRequest) -> ExperimentRecord:
     """
     Build an ExperimentRecord from a JobRequest.
     Snapshots the model spec at submission time — immutable from here on.
     """
-    spec = _load_spec(req.model_name)
+    spec = load_model_spec(req.model_name)
 
     record = ExperimentRecord(
         model_name    = req.model_name,
-        model_commit  = _git_head(),
+        model_commit  = configs_head(),
         code_version  = _code_version(),
         resolved_spec = spec,
         input_format  = req.input_format,
@@ -122,10 +149,7 @@ def build_record(req: JobRequest) -> ExperimentRecord:
         band_map      = req.band_map,
         parameters    = _merge_parameters(spec, req.parameters),
     )
-
-    record.source.uri  = req.input_dataset
-    record.source.type = _infer_source_type(req.input_dataset)
-
+    _finish_record(record, req.input_dataset)
     record.add_log(f"Record created — model={req.model_name} commit={record.model_commit}")
     return record
 
@@ -133,7 +157,7 @@ def build_record(req: JobRequest) -> ExperimentRecord:
 def build_record_inline(req: InlineJobRequest) -> ExperimentRecord:
     """
     Build an ExperimentRecord from an inline TOML spec.
-    Marks the record as non-reproducible via the registry.
+    Marked as not reproducible via the registry (``model_commit='local-inline'``).
     """
     spec = tomllib.loads(req.model_spec_toml)
 
@@ -147,67 +171,22 @@ def build_record_inline(req: InlineJobRequest) -> ExperimentRecord:
         band_map      = req.band_map,
         parameters    = _merge_parameters(spec, req.parameters),
     )
-
-    record.source.uri  = req.input_dataset
-    record.source.type = _infer_source_type(req.input_dataset)
-
+    _finish_record(record, req.input_dataset)
     record.add_log("Record created from inline spec — not reproducible via registry")
     return record
 
 
-# ── Main runner ───────────────────────────────────────────────────────────────
-
-def run_experiment(record: ExperimentRecord) -> ExperimentRecord:
+def build_reproduction(original: ExperimentRecord) -> ExperimentRecord:
     """
-    Execute a simulation end-to-end in a subprocess.
+    New record that repeats ``original`` from its stored snapshot.
 
-    Running in a subprocess guarantees that packages installed by
-    _ensure_package are fully visible in a fresh Python environment
-    — solving the plugin pattern without import caching issues.
-
-    Flow:
-        1. Install package in parent process (pip modifies sys.path on disk)
-        2. Spawn subprocess — inherits the updated environment
-        3. Subprocess imports, registers and runs the executor
-        4. Updated ExperimentRecord returned via stdout JSON
-    """
-    record.status = "running"
-    record.add_log("Dispatching to subprocess...")
-
-    # Install package in parent process so subprocess inherits it
-    _ensure_package(record.resolved_spec)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(record.model_dump_json())
-        record_path = f.name
-
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "worker.job_runner", record_path],
-            capture_output = True,
-            text           = True,
-        )
-
-        if result.returncode != 0:
-            record.status = "failed"
-            record.add_log(f"Subprocess failed:\n{result.stderr}")
-            logger.error(f"job_runner stderr:\n{result.stderr}")
-            raise RuntimeError(result.stderr)
-
-        updated = ExperimentRecord.model_validate_json(result.stdout)
-        return updated
-
-    finally:
-        os.unlink(record_path)
-
-
-def reproduce_experiment(original: ExperimentRecord) -> ExperimentRecord:
-    """
-    Re-run an experiment from its stored snapshot.
-
-    Uses resolved_spec directly — bypasses the current registry state.
-    Guarantees the reproduction uses the exact same spec as the original,
-    even if the TOML has changed since.
+    Uses the original ``resolved_spec``, input, mappings and parameters,
+    so it does not depend on the current state of the registry. The
+    ``code_version`` is the one installed now, because that is the code
+    that will run; a reproduction under a different version is still
+    useful, but the record must say so. ``metrics['reproduces']`` links
+    back to the original; the worker compares the outputs when the run
+    ends (``metrics['reproduction']``).
     """
     record = ExperimentRecord(
         model_name    = original.model_name,
@@ -218,26 +197,57 @@ def reproduce_experiment(original: ExperimentRecord) -> ExperimentRecord:
         column_map    = original.column_map,
         band_map      = original.band_map,
         parameters    = original.parameters,
+        period        = original.period,
         source        = original.source.model_copy(),
     )
-
+    record.output_path = default_output_path(record)
+    record.metrics[REPRODUCES_KEY] = original.experiment_id
     record.add_log(f"Reproducing experiment={original.experiment_id}")
-    return run_experiment(record)
+    if record.code_version != original.code_version:
+        record.add_log(
+            f"Warning: dissmodel {record.code_version} installed; "
+            f"the original ran with {original.code_version}"
+        )
+    return record
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
+# ── Execution ─────────────────────────────────────────────────────────────────
 
-def _resolve_executor(record: ExperimentRecord):
+def run_experiment(record: ExperimentRecord) -> ExperimentRecord:
     """
-    Look up the executor class from the model spec.
-    Only used as fallback — main path goes through job_runner subprocess.
+    Execute a simulation end-to-end in a subprocess.
+
+    The package declared in the spec is installed here, in the parent
+    process, so the subprocess starts with it importable and registers
+    the executor on import.
     """
-    model_class = record.resolved_spec.get("model", {}).get("class")
-    if not model_class:
-        raise ValueError(
-            f"Model spec for '{record.model_name}' is missing 'model.class'. "
-            f"Check the TOML in dissmodel-configs."
+    record.status = "running"
+    record.add_log("Dispatching to subprocess...")
+
+    _ensure_package(record.resolved_spec)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        f.write(record.model_dump_json())
+        record_path = f.name
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "worker.job_runner", record_path],
+            capture_output=True, text=True, check=False,
         )
 
-    import worker.executors  # noqa: F401
-    return ExecutorRegistry.get(model_class)
+        if result.returncode != 0:
+            record.status = "failed"
+            record.add_log(f"Subprocess failed:\n{result.stderr}")
+            logger.error(f"job_runner stderr:\n{result.stderr}")
+            raise RuntimeError(result.stderr)
+
+        return ExperimentRecord.model_validate_json(result.stdout)
+
+    finally:
+        os.unlink(record_path)
+
+
+def reproduce_experiment(original: ExperimentRecord) -> ExperimentRecord:
+    """Re-run an experiment from its stored snapshot (synchronously)."""
+    return run_experiment(build_reproduction(original))
