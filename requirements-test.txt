@@ -1,0 +1,4 @@
+# Test-only dependencies (CI and local): pip install -r requirements-test.txt
+pytest>=8,<9
+fakeredis>=2.20,<3
+httpx>=0.25,<0.28      # Starlette's TestClient in fastapi<0.110 does not work with httpx 0.28

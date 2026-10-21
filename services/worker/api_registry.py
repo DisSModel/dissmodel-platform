@@ -1,143 +1,97 @@
 # services/worker/api_registry.py
+"""
+Model registry: TOML specs in the dissmodel-configs repository.
+
+The repository is kept up to date by the ``configs-sync`` sidecar
+(see docker-compose.yml), which runs ``git pull`` on a timer and shares
+the checkout with the API and the worker as a read-only volume.
+
+Specs are read from disk on every call. An earlier version cached them
+with ``lru_cache``; since the sidecar pulls in a different container,
+nothing ever cleared that cache and the API kept serving the spec it
+first read until it was restarted. Parsing a TOML file is cheap enough
+that a cache is not worth that risk.
+"""
 from __future__ import annotations
 
+import os
 import subprocess
 import tomllib
-from functools import lru_cache
 from pathlib import Path
 
-from apscheduler.schedulers.background import BackgroundScheduler
 
-CONFIGS_PATH = Path("/configs")
-MODELS_DIR   = CONFIGS_PATH / "models"
+def configs_path() -> Path:
+    """Root of the dissmodel-configs checkout (``CONFIGS_PATH``, default ``/configs``)."""
+    return Path(os.getenv("CONFIGS_PATH", "/configs"))
 
 
-# ── Git sync ──────────────────────────────────────────────────────────────────
+def models_dir() -> Path:
+    return configs_path() / "models"
 
-def sync_configs() -> str:
-    if not CONFIGS_PATH.exists():
-        return "Path de configs não encontrado."
 
-    # Se não houver .git ou o comando git não existir, apenas limpa o cache
-    if not (CONFIGS_PATH / ".git").exists():
-        load_model_spec.cache_clear()
-        return "Modo local: cache limpo."
+# ── Git state ─────────────────────────────────────────────────────────────────
+
+def configs_head(short: bool = True) -> str:
+    """
+    Commit of the configs checkout, recorded as ``model_commit``.
+
+    Returns ``"local-dev"`` when the folder is not a git repository and
+    ``"unknown"`` when git is missing or fails.
+    """
+    root = configs_path()
+    if not (root / ".git").exists():
+        return "local-dev"
+    cmd = ["git", "-C", str(root), "rev-parse"]
+    if short:
+        cmd.append("--short")
+    cmd.append("HEAD")
+    try:
+        return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+
+def sync_configs() -> dict:
+    """
+    Try a fast-forward ``git pull`` and report the resulting commit.
+
+    In the Docker stack the API sees the checkout read-only, so the pull
+    fails there and the sidecar remains responsible for updating it; the
+    endpoint still reports which commit new jobs will record.
+    """
+    root = configs_path()
+    if not root.exists():
+        return {"pulled": False, "head": None, "detail": f"Configs path '{root}' not found"}
+
+    if not (root / ".git").exists():
+        return {"pulled": False, "head": "local-dev", "detail": "Not a git checkout: using local files"}
 
     try:
         result = subprocess.run(
-            ["git", "-C", str(CONFIGS_PATH), "pull", "--ff-only"],
-            capture_output=True, text=True
+            ["git", "-C", str(root), "pull", "--ff-only"],
+            capture_output=True, text=True, check=False,
         )
-        if result.returncode == 0:
-            load_model_spec.cache_clear()
-        return result.stdout.strip()
     except FileNotFoundError:
-        load_model_spec.cache_clear()
-        return "Git não instalado: usando arquivos locais."
+        return {"pulled": False, "head": "unknown", "detail": "git not installed"}
 
-def sync_configs____() -> str:
-    """
-    Tenta sincronizar via git. Se falhar ou não houver git, 
-    apenas limpa o cache para uso de arquivos locais.
-    """
-    if not CONFIGS_PATH.exists():
-        return f"Configs path '{CONFIGS_PATH}' não encontrado."
-
-    # Se NÃO for um repositório git, apenas limpa o cache e sai silenciosamente
-    if not (CONFIGS_PATH / ".git").exists():
-        load_model_spec.cache_clear()
-        return "Modo local: cache de modelos limpo."
-
-    try:
-        # Tenta rodar o git pull, mas não trava se o comando 'git' não existir
-        result = subprocess.run(
-            ["git", "-C", str(CONFIGS_PATH), "pull", "--ff-only"],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        
-        if result.returncode == 0 and "Already up to date." not in result.stdout:
-            load_model_spec.cache_clear()
-        
-        return result.stdout.strip() if result.returncode == 0 else "Git pull falhou."
-
-    except FileNotFoundError:
-        # SE O BINÁRIO 'GIT' NÃO EXISTIR, CAI AQUI:
-        load_model_spec.cache_clear()
-        return "Comando 'git' não encontrado: usando arquivos locais."
-
-def sync_configs__() -> str:
-    """
-    Tenta sincronizar via git se o repositório existir.
-    Caso contrário, apenas limpa o cache para desenvolvimento local.
-    """
-    if not CONFIGS_PATH.exists():
-        return f"Configs path '{CONFIGS_PATH}' not found. Skipping sync."
-
-    # 1. Verifica se a pasta montada é um repositório Git
-    if not (CONFIGS_PATH / ".git").exists():
-        # Em modo desenvolvimento local (sem git), apenas limpamos o cache
-        # para que novos arquivos .toml sejam lidos corretamente.
-        load_model_spec.cache_clear()
-        return "Local development mode: cache cleared (no git repo found)"
-
-    # 2. Tenta rodar o git pull (dentro de um try/except caso o binário 'git' não exista)
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(CONFIGS_PATH), "pull", "--ff-only"],
-            capture_output=True,
-            text=True,
-            check=False # Não levanta exceção automaticamente se o git retornar erro
-        )
-
-        if result.returncode != 0:
-            # Se o git falhar por outro motivo (ex: conflito), logamos mas não travamos a API
-            return f"Git pull failed (is it a valid repo?): {result.stderr.strip()}"
-
-        # Invalida o cache se houve mudança real no repositório
-        if "Already up to date." not in result.stdout:
-            load_model_spec.cache_clear()
-
-        return result.stdout.strip()
-
-    except FileNotFoundError:
-        # Caso o binário 'git' não esteja instalado no container
-        load_model_spec.cache_clear()
-        return "Git command not found in container: using local files and clearing cache."
-
-
-def start_sync_scheduler(interval_seconds: int = 900) -> BackgroundScheduler:
-    """
-    Start the background scheduler for periodic config sync.
-    Called once at API startup.
-    """
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(
-        sync_configs,
-        trigger   = "interval",
-        seconds   = interval_seconds,
-        id        = "config_sync",
-        misfire_grace_time = 60,
-    )
-    scheduler.start()
-    return scheduler
+    detail = (result.stdout or result.stderr).strip()
+    return {"pulled": result.returncode == 0, "head": configs_head(), "detail": detail}
 
 
 # ── Spec loading ──────────────────────────────────────────────────────────────
 
-@lru_cache(maxsize=64)
 def load_model_spec(model_name: str) -> dict:
     """
-    Load and cache a model spec from TOML.
+    Load a model spec from ``models/<model_name>.toml``.
 
-    Cache is invalidated by sync_configs() after a successful git pull.
-    Raises FileNotFoundError if the model is not registered.
+    Raises FileNotFoundError if the model is not registered (including
+    names that would point outside the models folder).
     """
-    path = MODELS_DIR / f"{model_name}.toml"
+    directory = models_dir()
+    path = directory / f"{model_name}.toml"
 
-    if not path.exists():
-        available = [p.stem for p in MODELS_DIR.glob("*.toml")]
+    if path.parent != directory or not path.exists():
+        available = sorted(p.stem for p in directory.glob("*.toml")) if directory.exists() else []
         raise FileNotFoundError(
             f"Model '{model_name}' not found in registry. "
             f"Available: {available or 'none — is dissmodel-configs mounted?'}"
@@ -149,38 +103,26 @@ def load_model_spec(model_name: str) -> dict:
 
 def list_models() -> list[dict]:
     """
-    Return metadata for all registered models.
-    Used by GET /models.
+    Return metadata for all registered models (used by GET /models).
+
+    A spec that does not parse is listed with its error instead of being
+    skipped, so a broken TOML shows up in the API instead of vanishing.
     """
-    if not MODELS_DIR.exists():
+    directory = models_dir()
+    if not directory.exists():
         return []
 
     models = []
-    for path in sorted(MODELS_DIR.glob("*.toml")):
+    for path in sorted(directory.glob("*.toml")):
         try:
             spec = load_model_spec(path.stem)
-            models.append({
-                "name":        path.stem,
-                "class":       spec.get("model", {}).get("class", ""),
-                "description": spec.get("model", {}).get("description", ""),
-            })
-        except Exception:
-            pass   # skip malformed TOMLs silently
-
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            models.append({"name": path.stem, "error": str(exc)})
+            continue
+        model = spec.get("model", {})
+        models.append({
+            "name":        path.stem,
+            "class":       model.get("class", ""),
+            "description": model.get("description", ""),
+        })
     return models
-
-
-# ── Catalog ───────────────────────────────────────────────────────────────────
-
-def load_catalog():
-    """
-    Open the Intake catalog from the configs repo.
-    Returns None if catalog.yaml is not present (optional in MVP).
-    """
-    import intake
-
-    catalog_path = CONFIGS_PATH / "catalog.yaml"
-    if not catalog_path.exists():
-        return None
-
-    return intake.open_catalog(str(catalog_path))

@@ -9,11 +9,19 @@ from minio import Minio
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
+def env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean from the environment. ``bool("false")`` is True, so parse the text."""
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 minio_client = Minio(
     os.getenv("MINIO_ENDPOINT", "minio:9000"),
     access_key = os.getenv("MINIO_ACCESS_KEY", "inpe_admin"),
     secret_key = os.getenv("MINIO_SECRET_KEY", "inpe_secret_2024"),
-    secure     = bool(os.getenv("MINIO_SECURE", "")),
+    secure     = env_flag("MINIO_SECURE"),
 )
 
 BUCKET_INPUTS  = "dissmodel-inputs"
@@ -32,7 +40,7 @@ def download_to_file(uri: str, dest: str) -> str:
         minio_client.fget_object(bucket, key, dest)
         return dest
 
-    if uri.startswith("http://") or uri.startswith("https://"):
+    if uri.startswith(("http://", "https://")):
         import urllib.request
         urllib.request.urlretrieve(uri, dest)  # nosec B310
         return dest

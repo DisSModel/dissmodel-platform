@@ -3,9 +3,8 @@
 # Valida automaticamente todos os executors na pasta services/worker/executors/
 # Não requer imports manuais em __init__.py
 
-import sys
-import os
 import importlib.util
+import sys
 from pathlib import Path
 
 # Configura o path para encontrar o pacote 'worker'
@@ -13,8 +12,9 @@ BASE_DIR = Path(__file__).parent.parent
 SERVICES_DIR = BASE_DIR / "services"
 sys.path.insert(0, str(SERVICES_DIR))
 
-from dissmodel.executor.testing import ExecutorTestHarness
 from dissmodel.executor.registry import ExecutorRegistry
+from dissmodel.executor.testing import ExecutorTestHarness
+
 
 def discover_and_import_executors():
     """Varre a pasta de executors e importa todos os arquivos .py"""
@@ -55,7 +55,7 @@ if __name__ == "__main__":
             else:
                 print(f"❌ {name} falhou nos testes de contrato")
                 failed.append(name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — report every executor, then fail
             print(f"💥 Erro ao testar {name}: {e}")
             failed.append(name)
 

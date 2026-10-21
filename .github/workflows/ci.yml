@@ -31,7 +31,7 @@ jobs:
         run: pip install ruff
 
       - name: Run Lint
-        run: ruff check services/api/ services/worker/ --exclude __pycache__,*.apagar,*.pyc
+        run: ruff check services/api/ services/worker/ scripts/
 
 
   typecheck:
@@ -52,7 +52,7 @@ jobs:
       - name: Run Mypy
         run: |
           # Focamos apenas na lógica da API e Worker da plataforma
-          PYTHONPATH=$PWD/services mypy --ignore-missing-imports services/api/main.py services/worker/worker.py
+          PYTHONPATH=$PWD/services mypy --ignore-missing-imports services/api/main.py services/worker/worker.py services/worker/runner.py services/worker/job_runner.py services/worker/compare.py
 
 
   security:
@@ -85,19 +85,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create empty .env file
-        run: touch .env
-
-      - name: Start Redis and MinIO
-        run: docker compose up -d redis minio
-
-      - name: Wait for Redis
-        run: |
-          for i in $(seq 1 10); do
-            docker compose exec redis redis-cli ping && break
-            sleep 3
-          done
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -107,19 +94,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r services/api/requirements.txt
-          pip install pytest
+          pip install -r requirements-test.txt
 
+      # In-memory Redis (fakeredis); MinIO is not contacted.
       - name: Run API Tests
-        run: |
-          if [ -d "services/api/tests/" ]; then
-            pytest services/api/tests/
-          else
-            echo "Aviso: diretório de testes da API não encontrado, continuando..."
-          fi
-
-      - name: Stop services
-        if: always()
-        run: docker compose --env-file /dev/null down
+        run: pytest services/api/tests
 
 
   test-worker:
@@ -127,19 +106,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Create empty .env file
-        run: touch .env
-
-      - name: Start Redis
-        run: docker compose up -d redis
-
-      - name: Wait for Redis
-        run: |
-          for i in $(seq 1 10); do
-            docker compose exec redis redis-cli ping && break
-            sleep 3
-          done
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -150,20 +116,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r services/worker/requirements.txt
-          pip install pytest
+          pip install -r requirements-test.txt
 
+      # Runs the real job subprocess with a temporary registry and a local output root.
       - name: Run Worker Tests
-        run: |
-          if [ -d "services/worker/tests/" ]; then
-            pytest services/worker/tests/
-          else
-            echo "Sem diretório de testes — validando contratos dos executors..."
-            PYTHONPATH=$PWD/services python3 scripts/validate_executors.py
-          fi
+        run: PYTHONPATH=$PWD/services pytest services/worker/tests
 
-      - name: Stop services
-        if: always()
-        run: docker compose --env-file /dev/null down
+      - name: Validate executor contracts
+        run: PYTHONPATH=$PWD/services python3 scripts/validate_executors.py
 
 
   build-docker:
