@@ -55,10 +55,55 @@ def default_output_path(record: ExperimentRecord) -> str:
     return f"{output_root()}/{record.experiment_id}/output{suffix}"
 
 
+# Keys of [model] that describe the registration, not the run. The same set
+# as dissmodel.executor.cli._SPEC_METADATA_KEYS (checked by a test), plus
+# the platform's own output_suffix.
+SPEC_METADATA_KEYS = frozenset({
+    "executor_module", "name", "class", "description", "package", "dissmodel",
+    "output_suffix",
+})
+
+
 def _merge_parameters(resolved_spec: dict, overrides: dict) -> dict:
-    """TOML defaults merged with per-request overrides; the request wins."""
-    defaults = resolved_spec.get("model", {}).get("parameters", {})
-    return {**defaults, **overrides}
+    """
+    ``record.parameters`` for a run, in increasing precedence:
+
+    1. every key of ``[model]`` that is not registration metadata or
+       ``[model.parameters]`` (e.g. ``land_use_types``, ``[[model.potential]]``,
+       ``[model.static]``);
+    2. ``[model.parameters]``;
+    3. the request's ``parameters``.
+
+    This is what ``dissmodel``'s CLI does with ``--toml`` (``_load_toml``)
+    and what ``ModelExecutor.run()`` expects. Taking only layer 2, as
+    v0.1.0 did, left the DisSLUCC executors without ``land_use_types``
+    and the coefficients, and they failed ``validate()``.
+    """
+    model = dict(resolved_spec.get("model", {}))
+
+    # land_use_types may be a table ([model.land_use_types] types = [...]).
+    land_use_types = model.get("land_use_types")
+    if isinstance(land_use_types, dict):
+        model["land_use_types"] = land_use_types.get("types", [])
+
+    spec_extra = {k: v for k, v in model.items() if k not in SPEC_METADATA_KEYS and k != "parameters"}
+    return {**spec_extra, **model.get("parameters", {}), **overrides}
+
+
+def _dissmodel_requirement_warning(spec: dict) -> str | None:
+    """Warning when the installed dissmodel does not satisfy ``model.dissmodel``."""
+    required = spec.get("model", {}).get("dissmodel")
+    if not required:
+        return None
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
+    try:
+        ok = _code_version() in SpecifierSet(required)
+    except InvalidSpecifier:
+        return f"Warning: model.dissmodel '{required}' is not a valid version specifier"
+    if ok:
+        return None
+    return f"Warning: the model requires dissmodel {required}; {_code_version()} is installed"
 
 
 def _infer_source_type(uri: str) -> str:
@@ -129,6 +174,9 @@ def _finish_record(record: ExperimentRecord, input_dataset: str) -> ExperimentRe
             f"Warning: model.package '{package}' is not pinned to one version; "
             f"the installed version is recorded in metrics['environment']"
         )
+    warning = _dissmodel_requirement_warning(record.resolved_spec)
+    if warning:
+        record.add_log(warning)
     return record
 
 

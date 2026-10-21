@@ -198,3 +198,51 @@ def test_reproduction_detects_different_values(platform_env, fake_redis, monkeyp
 def test_env_flag(monkeypatch, value, expected):
     monkeypatch.setenv("X_FLAG", value)
     assert env_flag("X_FLAG") is expected
+
+
+# ── Spec layout of the ecosystem packages ─────────────────────────────────────
+
+# v0.1.0: only [model.parameters] reached record.parameters, so the DisSLUCC
+# executors (land_use_types, coefficients at the [model] level) failed validate().
+def test_parameters_match_dissmodel_cli(platform_env):
+    from dissmodel.executor.cli import _load_toml
+
+    path = platform_env["configs"] / "models" / "toy_spec_fields.toml"
+    cli_params, _ = _load_toml(str(path))
+    record = _submit("toy_spec_fields")
+
+    # output_suffix is platform metadata; dissmodel 0.6.6 does not know it.
+    expected = {k: v for k, v in cli_params.items() if k != "output_suffix"}
+    assert record.parameters == expected
+    assert record.parameters["land_use_types"] == ["f", "d", "outros"]
+    assert record.parameters["resolution"] == 1000.0     # [model.parameters] wins
+    assert record.parameters["potential"][0]["lu"] == "f"
+
+
+def test_request_parameters_win(platform_env):
+    record = _submit("toy_spec_fields", parameters={"resolution": 250.0})
+    assert record.parameters["resolution"] == 250.0
+
+
+def test_metadata_keys_cover_dissmodel_cli():
+    from dissmodel.executor.cli import _SPEC_METADATA_KEYS
+
+    from worker.runner import SPEC_METADATA_KEYS
+    assert _SPEC_METADATA_KEYS <= SPEC_METADATA_KEYS
+
+
+def test_dissmodel_requirement_is_checked(platform_env):
+    record = _submit("toy_spec_fields")
+    assert not any("requires dissmodel" in line for line in record.logs)
+
+    path = platform_env["configs"] / "models" / "toy_spec_fields.toml"
+    path.write_text(path.read_text().replace(">=0.6.0,<0.7.0", ">=9"))
+    record = _submit("toy_spec_fields")
+    assert any("requires dissmodel >=9" in line for line in record.logs)
+
+
+# v0.1.0: executor_module = "disslucc.executors" registered nothing, because
+# that package re-exports its executors lazily.
+def test_executor_in_lazy_package_is_found(platform_env):
+    record = run_experiment(_submit("toy_lazy"))
+    assert record.status == "completed"

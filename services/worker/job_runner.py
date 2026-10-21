@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import importlib.metadata
 import os
+import pkgutil
 import platform
 import posixpath
 import sys
@@ -92,6 +93,24 @@ def environment(executor_cls) -> dict:
     }
 
 
+def import_executor_module(name: str) -> None:
+    """
+    Import ``model.executor_module`` so its executors register themselves.
+
+    When the name is a package, its direct submodules are imported too:
+    executors register on class creation (``__init_subclass__``), and a
+    package that re-exports them lazily — as ``disslucc.executors`` does,
+    to keep ``python -m disslucc.executors.continuous`` warning-free —
+    defines no executor class just by being imported.
+    """
+    mod = importlib.import_module(name)
+    if not hasattr(mod, "__path__"):
+        return
+    for info in pkgutil.iter_modules(mod.__path__):
+        if not info.name.startswith("_"):
+            importlib.import_module(f"{name}.{info.name}")
+
+
 def main(record_path: str) -> None:
     real_stdout = os.fdopen(os.dup(1), "w")
     sys.stdout  = sys.stderr
@@ -107,7 +126,7 @@ def main(record_path: str) -> None:
     # The package itself is installed by the parent process (runner._ensure_package).
     module = model.get("executor_module", "")
     if module:
-        importlib.import_module(module)
+        import_executor_module(module)
 
     import worker.executors  # noqa: F401  (executors bundled with the platform)
 

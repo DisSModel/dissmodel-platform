@@ -18,10 +18,13 @@ Brings the platform in line with DisSModel 0.6.6, DisSCube 0.6.0 and DisSLUCC 0.
 - `/reproduce` records the dissmodel version installed now instead of copying the original one.
 - Model specs are read from disk on every request; the `lru_cache` was never cleared after the sidecar's `git pull`.
 - `MINIO_SECURE=false` no longer turns TLS on.
+- `record.parameters` merges the `[model]` spec fields, `[model.parameters]` and the request, as `dissmodel`'s CLI does; the DisSLUCC executors failed `validate()` without `land_use_types` and the coefficients.
+- `executor_module` may name a package that re-exports its executors lazily (`disslucc.executors`); its submodules are imported so the executors register.
 
 ### Added
 
 - `GET /experiments/{id}` returns the full `ExperimentRecord`.
+- `model.dissmodel` (version range in the spec) is checked against the installed `dissmodel`; a mismatch is logged.
 - Reproductions are compared with the original when they finish (`metrics['reproduction']`): file checksum and, for GeoTIFF, SHA-256 of the decoded bands.
 - Each run records Python, the executor and the versions of the packages involved (`metrics['environment']`); an unpinned `model.package` is flagged.
 - Worker and API test suites (`services/*/tests`), run in CI without Docker.

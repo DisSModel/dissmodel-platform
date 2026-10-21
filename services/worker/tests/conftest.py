@@ -51,3 +51,36 @@ def platform_env(tmp_path, monkeypatch):
     # Anything an executor writes with a relative path lands here, not in the repo.
     monkeypatch.chdir(tmp_path)
     return {"configs": configs, "outputs": outputs, "tmp": tmp_path}
+
+TOMLS["toy_lazy"] = """
+[model]
+name = "toy_lazy"
+class = "toy_lazy"
+executor_module = "worker.tests.lazy_pkg"
+output_suffix = ".bin"
+"""
+
+# Same layout as disslucc's examples/dissmodel-configs/lucc_continuous.toml:
+# spec fields at the [model] level, run values under [model.parameters].
+TOMLS["toy_spec_fields"] = """
+[model]
+name = "toy_spec_fields"
+class = "toy_bytes"
+executor_module = "worker.tests.toy_executors"
+description = "spec fields at the model level"
+dissmodel = ">=0.6.0,<0.7.0"
+output_suffix = ".bin"
+land_use_types = ["f", "d", "outros"]
+resolution = 5000.0
+
+[model.static]
+f = -1
+
+[[model.potential]]
+lu = "f"
+const = 0.7
+
+[model.parameters]
+k = 3
+resolution = 1000.0
+"""
