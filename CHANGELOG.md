@@ -19,6 +19,11 @@ Brings the platform in line with DisSModel 0.6.6, DisSCube 0.6.0 and DisSLUCC 0.
 - Model specs are read from disk on every request; the `lru_cache` was never cleared after the sidecar's `git pull`.
 - `MINIO_SECURE=false` no longer turns TLS on.
 - `record.parameters` merges the `[model]` spec fields, `[model.parameters]` and the request, as `dissmodel`'s CLI does; the DisSLUCC executors failed `validate()` without `land_use_types` and the coefficients.
+- `POST /submit_job_inline` answers 400 for a spec that does not parse (was 500).
+- `scripts/backup.sh` copies the MinIO and Redis volumes (it archived `./data/*`, which holds neither); `scripts/health-check.sh` checks MinIO on port 19000.
+- MinIO health check uses `mc ready local`; the image has no `curl`, so the container was always reported unhealthy.
+- `.env.example` has working values: its placeholders for `MINIO_ENDPOINT` and `REDIS_HOST` overrode the Compose defaults and broke a fresh install.
+- `*.sh` files keep LF line endings on Windows checkouts (`.gitattributes`).
 - `executor_module` may name a package that re-exports its executors lazily (`disslucc.executors`); its submodules are imported so the executors register.
 
 ### Added
@@ -35,10 +40,17 @@ Brings the platform in line with DisSModel 0.6.6, DisSCube 0.6.0 and DisSLUCC 0.
 - `dissmodel` pinned to 0.6.6 in all images (was `>=0.5.0`).
 - `CONFIGS_PATH` is read from the environment.
 
+### Documentation
+
+- Rewritten to describe what the platform does: README, getting started with a first job (LuccME Lab 1 with DisSLUCC, `examples/submit_lab1.py`), architecture, ExperimentRecord (reproducing and citing), model registry, executors, data, API reference, security, deployment. English throughout; one flat `docs/` folder.
+- Removed descriptions of components that do not exist (`dissmodel-executors`, `CoastalTiffExecutor` and the executor hierarchy, Intake catalogs, scratch directories, read-only root filesystem) and of behaviour that changed (APScheduler sync, `lru_cache`).
+- The Windows installation report moved to `docs/reports/`, with the status of each issue it found.
+
 ### Removed
 
 - `entrypoint_install.sh` scripts that installed `dissmodel` from an old branch of `LambdaGeo/dissmodel`; the `../dissmodel` volume mounts that went with them.
 - APScheduler (the configs-sync sidecar updates the registry) and the unused Intake catalog loader.
+- Unused variables `DISSMODEL_CLOUD`, `WORKER_QUEUE` and `WORKER_CONCURRENCY` from the Compose files.
 
 ## [0.1.0] - 2026-06-13
 

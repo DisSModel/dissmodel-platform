@@ -1,193 +1,80 @@
 # DisSModel Platform
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docker Compose](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-green.svg)](https://www.python.org/)
 
-> **Status: optional and experimental.** The platform runs DisSModel executors behind a REST API and keeps an `ExperimentRecord` for each run. Reproducing DisSModel, DisSCube and DisSLUCC results does not depend on it: the packages run on their own from the command line, with pinned versions and the records they write (see the Open LUCC workflow). The platform is a convenience for running jobs on a shared server.
+A small server for running [DisSModel](https://github.com/DisSModel/dissmodel) executors as queued jobs. You submit a job to a REST API, a worker runs it, and every run leaves an `ExperimentRecord`: the model spec, the input checksum, the package versions, the output and its checksum. A run can be repeated from its record, and the worker reports whether the new output is identical to the original.
 
-> ⚠️ **Disclaimer: MVP Phase**
-> While the DisSModel ecosystem is steadily growing, this platform is currently a **Minimum Viable Product (MVP)**. Security hardening and extreme performance efficiency are not the primary focus at this stage of development. Please use caution if deploying in production environments.
+> **Status: optional and experimental (MVP).** Reproducing DisSModel, DisSCube and DisSLUCC results does not depend on this platform: the packages run on their own from the command line, with pinned versions and the records they write. The platform is a convenience for running jobs on a shared server. It has not been hardened for exposure to the internet; see [Security](docs/security.md).
 
-Scalable execution platform for **DisSModel** (Distributed Spatial Simulation Model).
+## What it runs
 
-An integrated environment for developing and running geospatial models, featuring JupyterLab, a REST API, and distributed workers.
+Any class that implements DisSModel's `ModelExecutor` and is installed in the worker. The worker image ships with:
 
-## 🌍 Where It Runs
+| Package | Version | Executors |
+|---|---|---|
+| `dissmodel` | 0.6.6 | core (`ModelExecutor`, `ExperimentRecord`) |
+| `disslucc` | 0.5.0 | `lucc_continuous`, `lucc_discrete`, `lucc_continuous_saturation` |
 
-- ✅ Local server (desktop/laptop)
-- ✅ On-premise cluster (INPE, universities)
-- ✅ Private cloud (OpenStack, etc.)
-- ✅ Public cloud (AWS, GCP, Azure) — optional
+Other executors are installed from the `package` field of a model spec (see [Model registry](docs/registry.md)).
 
-## 🚀 Quick Start
+## Quick start
 
-### Prerequisites
-
-- Docker and Docker Compose installed
-- 8 GB+ RAM recommended
-- 20 GB+ free disk space
-
-### Installation
+Requires Docker with Compose v2 and about 4 GB of free memory for the build.
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/DisSModel/dissmodel-platform.git
 cd dissmodel-platform
-
-# 2. Configure environment variables
-cp .env.example .env
-
-# 3. Start the platform
-docker compose up --build
-
-# 4. Access services
-# JupyterLab: http://localhost:8888
-# API Docs:   http://localhost:8000/docs
-# MinIO:      http://localhost:9001
+cp .env.example .env        # then replace every "change-me"
+docker compose up -d --build
 ```
 
-### Stop the Platform
+| Service | Address |
+|---|---|
+| API (OpenAPI docs) | http://localhost:8000/docs |
+| JupyterLab | http://localhost:8888 |
+| MinIO console | http://localhost:19001 |
+
+First job: LuccME Lab 1 with DisSLUCC, a few seconds of computing.
 
 ```bash
-docker compose down
+base=https://raw.githubusercontent.com/DisSModel/disslucc/main/data/input
+curl -sLo data/inputs/csAC.zip "$base/csAC.zip"
+curl -sLo data/inputs/examples_demand_lab1.csv "$base/examples_demand_lab1.csv"
+
+DISSMODEL_API_KEY=<one of your API_KEYS> python3 examples/submit_lab1.py
 ```
 
-### Stop and Remove Data
+The script submits the job, waits for it, asks for a reproduction and prints whether the two outputs are identical. [Getting started](docs/getting-started.md) explains each step.
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): install, first job, where the results go
+- [Architecture](docs/architecture.md): services and the path of a job
+- [ExperimentRecord](docs/experiment-record.md): what is recorded; reproducing and citing a run
+- [Model registry](docs/registry.md): model specs in TOML and how parameters are merged
+- [Executors](docs/executors.md): writing and testing a `ModelExecutor`
+- [Input and output data](docs/data.md)
+- [API reference](docs/api-reference.md)
+- [Security](docs/security.md)
+- [Deployment](docs/deployment.md): server setup, backups, troubleshooting
+
+The same pages build as a site with MkDocs (`pip install mkdocs-material && mkdocs serve`).
+
+## Development
 
 ```bash
-docker compose down -v  # Removes volumes (use with caution!)
+pip install -r services/worker/requirements.txt -r services/api/requirements.txt -r requirements-test.txt
+PYTHONPATH=services pytest services/worker/tests services/api/tests
 ```
 
-## 🏗️ Architecture
+The tests need neither Docker, Redis nor MinIO. Contribution workflow: [CONTRIBUTING.md](CONTRIBUTING.md); changes: [CHANGELOG.md](CHANGELOG.md).
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    DISSMODEL PLATFORM                           │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  [Researcher] → Browser → JupyterLab (Container)               │
-│                              │                                  │
-│                              ├── Direct Python (imports)        │
-│                              └── REST API (heavy jobs)          │
-│                              │                                  │
-│                              ▼                                  │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │              SERVER / DOCKER HOST                        │   │
-│  │                                                          │   │
-│  │  🟦 Jupyter    🟩 API      🟥 Worker    🗄️ MinIO  🔄 Redis │   │
-│  │  (Frontend)  (Gateway)   (Processing) (Storage) (Queue)  │   │
-│  │                                                          │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+## Team
 
-### Components
+- **Sérgio Souza Costa** (UFMA, LambdaGeo) — maintainer
+- **Hissa Barbara Oliveira** — PIBIT 2026, Plano 3: Prototipagem de Plataforma Cloud-Native para Simulação Espacial Distribuída com DisSModel
 
-| Service | Port | Description |
-|---------|------|-------------|
-| **JupyterLab** | 8888 | Python development environment |
-| **API Gateway** | 8000 | FastAPI for job submission |
-| **Worker** | — | Background processing (scalable) |
-| **MinIO** | 9000/9001 | S3-compatible object storage |
-| **Redis** | 6379 | Message queue and cache |
+## License
 
-## 📚 Documentation
-
-- [Architecture](docs/architecture.md) — Technical details and design decisions
-- [Deployment](docs/deployment.md) — How to deploy in different environments
-- [User Guide](docs/user-guide.md) — For researchers
-
-## 📋 Usage Examples
-
-### Local Development (Direct Python)
-
-```python
-from dissmodel.core import Environment
-from dissmodel.geo.raster import RasterBackend
-
-# Load data
-backend = RasterBackend.from_file('/data/inputs/dem.tif')
-
-# Configure and run model
-env = Environment(end_time=100)
-model = FloodModel(backend=backend, sea_level=0.05)
-results = env.run()
-
-# Visualise
-model.display()
-```
-
-### API Execution (Heavy Jobs)
-
-```python
-import requests
-
-payload = {
-    "model_name": "FloodModel",
-    "input_dataset": "dem.tif",
-    "parameters": {"sea_level": 0.05, "steps": 1000}
-}
-
-response = requests.post(
-    "http://api:8000/submit_job",
-    json=payload
-)
-
-job_id = response.json()['job_id']
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and adjust as needed:
-
-```bash
-# MinIO Credentials
-MINIO_ROOT_USER=user
-MINIO_ROOT_PASSWORD=user_password
-
-# DisSModel Config
-DISSMODEL_LOG_LEVEL=INFO
-DISSMODEL_CLOUD=false
-```
-
-### Scaling Workers
-
-```bash
-# Scale up to 5 workers
-docker compose up --scale worker=5
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a branch (`git checkout -b feature/new-feature`)
-3. Commit your changes (`git commit -m 'Add new feature'`)
-4. Push to the branch (`git push origin feature/new-feature`)
-5. Open a Pull Request
-
-See [docs/developer-guide.md](docs/developer-guide.md) for more details.
-
-## Equipe PIBIT 2026
-
-- **Hissa Barbara Oliveira** — Plano 3: Prototipagem de Plataforma Cloud-Native para Simulação Espacial Distribuída com DisSModel
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE)
-
-## 🙏 Acknowledgements
-
-- [DisSModel](https://github.com/DisSModel/dissmodel) — Core modelling library
-- [Jupyter Project](https://jupyter.org/) — Development environment
-- [MinIO](https://min.io/) — S3-compatible object storage
-- [Pangeo](https://pangeo.io/) — Inspiration for cloud-native architecture
-
-## 📞 Contact
-
-- **Organisation:** DisSModel / INPE
-- **Issues:** https://github.com/DisSModel/dissmodel-platform/issues
-- **Discussions:** https://github.com/DisSModel/dissmodel-platform/discussions
+MIT — see [LICENSE](LICENSE).

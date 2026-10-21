@@ -1,25 +1,29 @@
-# DisSModel Platform Documentation
+# DisSModel Platform
 
-Welcome to the official documentation for the **DisSModel Platform**.
+The DisSModel Platform runs [DisSModel](https://github.com/DisSModel/dissmodel) executors as queued jobs on a server and keeps a record of each run.
 
-The DisSModel Platform is a robust service designed for the execution, tracking, and reproduction of Land Use and Cover Change (LUCC) simulations. It provides a standardized environment for scientific modeling, ensuring that experiments are audit-ready and fully reproducible.
+- You submit a job to a REST API: a model (registered in a git repository of TOML specs, or sent inline), an input dataset and parameters.
+- A worker runs the model's `ModelExecutor` in a separate Python process and stores the output in MinIO.
+- Each run leaves an [`ExperimentRecord`](experiment-record.md): the spec it used, the input checksum, the versions of Python and of the packages involved, the output checksum and the logs.
+- `POST /experiments/{id}/reproduce` runs it again from that record, and the worker reports whether the output is identical, file for file and value for value.
 
-> **Status: optional and experimental.** The platform runs DisSModel executors behind a REST API and keeps an `ExperimentRecord` for each run. Reproducing DisSModel, DisSCube and DisSLUCC results does not depend on it: the packages run on their own from the command line, with pinned versions and the records they write (see the Open LUCC workflow). The platform is a convenience for running jobs on a shared server.
+!!! note "Status: optional and experimental"
+    Reproducing DisSModel, DisSCube and DisSLUCC results does not depend on this platform. The packages run from the command line, with pinned versions and the records they write; that is the path used in the published work. The platform is a convenience for running jobs on a shared server. It has not been hardened for exposure to the internet ([Security](security.md)).
 
-## Key Features
+## Where to start
 
-*   **Immutable Provenance:** Every simulation is recorded with a complete snapshot of its configuration and data integrity.
-*   **Model Registry:** Decouples model parameters from implementation via version-controlled TOML files.
-*   **Isolated Execution:** A Redis queue feeds one or more workers; each job runs in its own Python subprocess.
-*   **Researcher-Centric:** Designed to facilitate the transition from local Jupyter exploration to large-scale production.
+| If you want to | Read |
+|---|---|
+| install it and run a first job | [Getting started](getting-started.md) |
+| understand how a job moves through the services | [Architecture](architecture.md) |
+| know what a run records and how to repeat or cite it | [ExperimentRecord](experiment-record.md) |
+| register a model | [Model registry](registry.md) |
+| bring your own model | [Executors](executors.md) |
+| call the API | [API reference](api-reference.md) |
+| set it up on a server | [Deployment](deployment.md) |
 
-## Getting Started
+## What it is not
 
-To understand how the platform works, we recommend starting with the following sections:
-
-1.  [**Platform Overview**](platform/index.md) - Learn about the architecture and core components.
-2.  [**Researcher Guide**](platform/researcher-guide.md) - A step-by-step guide to developing and running models.
-3.  [**API Reference**](platform/api-reference.md) - Complete documentation of the available REST endpoints.
-
----
-*This documentation was automatically generated from the source code.*
+- It does not distribute one simulation across machines. Each job runs on one worker; more workers run more jobs at once.
+- It does not integrate with Pangeo (Dask, Intake, Zarr) or the Brazil Data Cube.
+- It does not deposit results in Zenodo; `/publish` returns the provenance as JSON.

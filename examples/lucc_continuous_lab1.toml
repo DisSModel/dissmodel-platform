@@ -1,0 +1,84 @@
+# LuccME Lab 1 (csAC, Acre) with the DisSLUCC continuous executor.
+#
+# Copied from DisSLUCC 0.5.0, examples/dissmodel-configs/lucc_continuous.toml
+# (https://github.com/DisSModel/disslucc), without the `package` line:
+# disslucc==0.5.0 is already installed in the worker image.
+#
+# Used by examples/submit_lab1.py (inline job) and by docs/getting-started.md.
+# To register it instead, copy it to models/ in your dissmodel-configs repository.
+#
+# demand_csv has no default; pass it in the job's parameters.
+
+[model]
+executor_module  = "disslucc.executors"
+name             = "lucc_continuous"
+class            = "lucc_continuous"
+description      = "LUCC continuous simulation (CLUE-like, linear regression potential)"
+dissmodel        = ">=0.6.0,<0.7.0"
+
+# Model-level config read from spec (record.resolved_spec["model"]),
+# merged into record.parameters by the platform before run().
+land_use_types   = ["f", "d", "outros"]
+land_use_no_data = "outros"
+complementar_lu  = "f"
+cell_area        = 25.0
+resolution       = 5000.0
+
+[model.static]
+f      = -1
+d      = -1
+outros = 1
+
+# Runtime parameters (record.parameters).
+# demand_csv must be supplied at experiment time -- no sensible default.
+[model.parameters]
+n_steps = 7
+
+[[model.potential_data]]
+lu    = "f"
+const = 0.7392
+  [model.potential_data.betas]
+  assentamen = -0.2193
+  uc_us      =  0.1754
+  uc_pi      =  0.09708
+  ti         =  0.1207
+  dist_riobr =  0.0000002388
+  fertilidad = -0.1313
+
+[[model.potential_data]]
+lu    = "d"
+const = 0.267
+  [model.potential_data.betas]
+  rodovias   = -0.0000009922
+  assentamen =  0.2294
+  uc_us      = -0.09867
+  dist_riobr = -0.0000003216
+  fertilidad =  0.1281
+
+[[model.potential_data]]
+lu    = "outros"
+const = 0.0
+
+[[model.allocation_data]]
+lu         = "f"
+static     = -1
+min_value  = 0
+max_value  = 1
+min_change = 0
+max_change = 1
+
+[[model.allocation_data]]
+lu         = "d"
+static     = -1
+min_value  = 0
+max_value  = 1
+min_change = 0
+max_change = 1
+
+[[model.allocation_data]]
+lu         = "outros"
+static     = 1
+min_value  = 0
+max_value  = 1
+min_change = 0
+max_change = 1

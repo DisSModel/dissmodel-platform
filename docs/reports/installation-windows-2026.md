@@ -1,4 +1,18 @@
-# Local Installation Checklist
+# Installation report: Windows with Docker Desktop (2026)
+
+!!! note "Status of the issues found"
+    This report recorded a first installation by a new contributor, following the README of that time. The issues it found were addressed afterwards:
+
+    1. MinIO console port: the documentation now gives 19001.
+    2. `X-API-Key` missing from the examples: every example now sends it.
+    3. `FloodModel` not in the catalog: the README example was replaced by LuccME Lab 1 with DisSLUCC, which ships with the worker.
+    4. `CONFIGS_REPO` needed to list models: documented in [Getting started](../getting-started.md#7-register-the-model); the first job uses an inline spec and needs no registry.
+    5. No test dataset: the first job downloads the Lab 1 inputs from the DisSLUCC repository.
+    6. CRLF line endings: `.gitattributes` now keeps `*.sh` with LF.
+    7. MinIO image not pulled from Docker Hub: the Quay alternative is in [Troubleshooting](../deployment.md#troubleshooting).
+
+    The MinIO health check, which called `curl` (absent from the image), now uses `mc ready local`.
+
 
 This document records the local installation test of DisSModel Platform on Windows using Docker Desktop and Git Bash.
 
