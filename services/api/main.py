@@ -6,6 +6,7 @@ import hmac
 import io
 import logging
 import os
+import tomllib
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated
@@ -163,7 +164,10 @@ async def submit_job_inline(req: InlineJobRequest):
     Submit a job with an inline TOML spec.
     Result is not reproducible via the registry — for exploration only.
     """
-    record = build_record_inline(req)
+    try:
+        record = build_record_inline(req)
+    except tomllib.TOMLDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid TOML in model_spec_toml: {exc}") from exc
     _enqueue(record)
     return _to_response(record)
 

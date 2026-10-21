@@ -29,7 +29,7 @@ else
 fi
 
 # MinIO
-if curl -s http://localhost:9000/minio/health/live > /dev/null; then
+if curl -s http://localhost:19000/minio/health/live > /dev/null; then
     echo "✅ MinIO: OK"
 else
     echo "❌ MinIO: FAILED"

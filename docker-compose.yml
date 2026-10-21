@@ -47,7 +47,6 @@ services:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - API_ENDPOINT=http://api:8000
-      - DISSMODEL_CLOUD=${DISSMODEL_CLOUD:-false}
       - JUPYTER_ENABLE_LAB=yes
     env_file:
       - .env
@@ -75,7 +74,6 @@ services:
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-inpe_admin}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
-      - WORKER_QUEUE=${WORKER_QUEUE:-dissmodel_jobs}
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
       - API_KEYS=${API_KEYS:-dev-key}
       - CONFIGS_PATH=/configs
@@ -112,8 +110,6 @@ services:
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-inpe_admin}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-inpe_secret_2024}
-      - WORKER_QUEUE=${WORKER_QUEUE:-dissmodel_jobs}
-      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-4}
       - DISSMODEL_LOG_LEVEL=${DISSMODEL_LOG_LEVEL:-INFO}
       - SAL_ANIMATE=0
       - CONFIGS_PATH=/configs
@@ -154,7 +150,7 @@ services:
     networks:
       - dissmodel-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]   # the MinIO image has no curl
       interval: 30s
       timeout: 20s
       retries: 3

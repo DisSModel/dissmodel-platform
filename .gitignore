@@ -75,3 +75,5 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+# Output of scripts/backup.sh
+backups/

@@ -1,38 +1,35 @@
 #!/bin/bash
+# DisSModel Platform — backup of the MinIO and Redis volumes and of .env.
+#
+#   scripts/backup.sh                         # development stack
+#   COMPOSE_FILE=docker-compose.prod.yml scripts/backup.sh
+#
+# Stops the stack while copying, so the copy is consistent, then starts it again.
+# Restore: see docs/deployment.md#backups.
 
-# ═══════════════════════════════════════════════════════════════
-# DISSMODEL PLATFORM - Backup Script
-# ═══════════════════════════════════════════════════════════════
+set -euo pipefail
 
-set -e
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+if [ "$COMPOSE_FILE" = "docker-compose.prod.yml" ]; then
+    VOLUMES="dissmodel-prod-minio-data dissmodel-prod-redis-data"
+else
+    VOLUMES="dissmodel-minio-data dissmodel-redis-data"
+fi
 
-BACKUP_DIR="./backups"
-TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-BACKUP_FILE="${BACKUP_DIR}/backup-${TIMESTAMP}.tar.gz"
+BACKUP_DIR="$(pwd)/backups/$(date +%Y-%m-%d_%H-%M-%S)"
+mkdir -p "$BACKUP_DIR"
 
-echo "💾 DisSModel Platform - Backup"
-echo "═══════════════════════════════════════════════════════════"
+echo "Stopping services ($COMPOSE_FILE)..."
+docker compose -f "$COMPOSE_FILE" down
 
-# Create backup directory
-mkdir -p ${BACKUP_DIR}
+for volume in $VOLUMES; do
+    echo "Copying volume $volume..."
+    docker run --rm -v "$volume":/v:ro -v "$BACKUP_DIR":/b alpine \
+        tar czf "/b/$volume.tar.gz" -C /v .
+done
+cp .env "$BACKUP_DIR/env"
 
-# Stop platform (optional, for consistency)
-echo "🛑 Stopping services..."
-docker compose down
+echo "Starting services..."
+docker compose -f "$COMPOSE_FILE" up -d
 
-# Create backup
-echo "📦 Creating backup..."
-tar -czvf ${BACKUP_FILE} \
-    data/inputs \
-    data/outputs \
-    data/storage \
-    data/redis \
-    .env
-
-# Restart platform
-echo "🚀 Restarting services..."
-docker compose up -d
-
-echo ""
-echo "✅ Backup created: ${BACKUP_FILE}"
-echo "═══════════════════════════════════════════════════════════"
+echo "Backup written to $BACKUP_DIR"

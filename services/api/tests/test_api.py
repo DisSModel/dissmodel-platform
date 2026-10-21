@@ -90,3 +90,10 @@ def test_admin_sync_reports_head(api):
     client, _, _ = api
     body = client.post("/admin/sync").json()
     assert body["head"] == "local-dev"
+
+
+def test_inline_invalid_toml_is_400(api):
+    client, _, _ = api
+    r = client.post("/submit_job_inline", json={"model_spec_toml": "[model", "input_dataset": "x"})
+    assert r.status_code == 400
+    assert "Invalid TOML" in r.json()["detail"]
