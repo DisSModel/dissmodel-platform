@@ -132,8 +132,8 @@ curl -s -X POST http://localhost:8000/submit_job \
        "parameters": {"demand_csv": "/data/inputs/examples_demand_lab1.csv"}}'
 ```
 
-!!! warning "DisSModel/dissmodel-configs"
-    The specs currently in [DisSModel/dissmodel-configs](https://github.com/DisSModel/dissmodel-configs) point to packages that predate DisSLUCC 0.5.0 (`disslucc-continuous`, `disslucc-discrete`) and install them from branches. Use the example above until that repository is updated.
+!!! note "DisSModel/dissmodel-configs"
+    [DisSModel/dissmodel-configs](https://github.com/DisSModel/dissmodel-configs) registers the three DisSLUCC 0.5.0 executors (`lucc_continuous`, `lucc_discrete`, `lucc_continuous_saturation`). `lucc_continuous` there is the same spec as the example above.
 
 See [Model registry](registry.md) for the spec format.
 

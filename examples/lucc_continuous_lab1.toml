@@ -5,7 +5,8 @@
 # disslucc==0.5.0 is already installed in the worker image.
 #
 # Used by examples/submit_lab1.py (inline job) and by docs/getting-started.md.
-# To register it instead, copy it to models/ in your dissmodel-configs repository.
+# Registered as models/lucc_continuous.toml in DisSModel/dissmodel-configs; to
+# register it in your own repository of specs, copy it to models/.
 #
 # demand_csv has no default; pass it in the job's parameters.
 

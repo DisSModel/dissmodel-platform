@@ -14,7 +14,7 @@ class            = "lucc_continuous"       # ExecutorRegistry key = the executor
 executor_module  = "disslucc.executors"    # imported so that the executor registers itself
 description      = "LUCC continuous simulation (CLUE-like, linear regression potential)"
 dissmodel        = ">=0.6.0,<0.8.0"        # dissmodel versions the model was written for
-# package        = "disslucc==0.5.0"       # installed before the run, if not in the image
+# package        = "..."                   # only for an executor that is not in the worker image (see below)
 
 # Model fields: passed to the executor
 land_use_types   = ["f", "d", "outros"]
@@ -51,6 +51,9 @@ n_steps = 7
 | `output_suffix` | no | extension of `output_path` (default `.tif`) |
 
 Pin `package` to one version (`==` or a full commit hash). A branch name or a range makes the record unable to say which code ran; the platform logs a warning, and the installed version still appears in `metrics['environment']`.
+
+!!! warning "`package` runs `pip install` before every job"
+    pip checks the dependencies of the package every time, even when it is already installed, and can replace `dissmodel` in the worker if the package's metadata asks for another range (for example `disslucc==0.5.0` asks for `dissmodel<0.7.0`, so it would downgrade 0.7.0). For an executor that is already in the worker image, leave `package` out; the version that ran is recorded in `metrics['environment']`.
 
 ## Parameters
 
