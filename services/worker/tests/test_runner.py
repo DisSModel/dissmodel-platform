@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import fakeredis
+import sys
+
 import pytest
 from dissmodel.executor.schemas import JobRequest
 
@@ -152,7 +154,7 @@ def test_reproduction_records_installed_version(platform_env):
     assert any("original ran with 0.0.1" in line for line in repro.logs)
 
 
-def _run_and_reproduce(fake_redis, monkeypatch, *, compress=None, offset=None):
+def _run_and_reproduce(fake_redis, monkeypatch, *, compress=None, offset=None, atol=None):
     original = _submit("toy_tiff")
     worker_mod._save_record(original)
     worker_mod.process_job(original.experiment_id)
@@ -164,7 +166,7 @@ def _run_and_reproduce(fake_redis, monkeypatch, *, compress=None, offset=None):
     if offset:
         monkeypatch.setenv("TOY_OFFSET", offset)
 
-    repro = build_reproduction(original)
+    repro = build_reproduction(original, atol=atol)
     worker_mod._save_record(repro)
     worker_mod.process_job(repro.experiment_id)
     return worker_mod._load_record(repro.experiment_id).metrics["reproduction"]
@@ -175,6 +177,7 @@ def test_reproduction_identical(platform_env, fake_redis, monkeypatch):
     result = _run_and_reproduce(fake_redis, monkeypatch)
     assert result["file_identical"] is True
     assert result["values_identical"] is True
+    assert result["verdict"] == "identical"
 
 
 def test_reproduction_same_values_different_file(platform_env, fake_redis, monkeypatch):
@@ -182,11 +185,32 @@ def test_reproduction_same_values_different_file(platform_env, fake_redis, monke
     result = _run_and_reproduce(fake_redis, monkeypatch, compress="lzw")
     assert result["file_identical"] is False
     assert result["values_identical"] is True
+    assert result["verdict"] == "values_identical"
 
 
 def test_reproduction_detects_different_values(platform_env, fake_redis, monkeypatch):
     result = _run_and_reproduce(fake_redis, monkeypatch, offset="1e-6")
     assert result["values_identical"] is False
+    assert result["verdict"] == "differs"      # no tolerance declared: never "equivalent"
+
+
+def test_reproduction_equivalent_only_with_declared_tolerance(platform_env, fake_redis, monkeypatch):
+    result = _run_and_reproduce(fake_redis, monkeypatch, offset="1e-6", atol=1e-3)
+    assert result["verdict"] == "equivalent"
+    assert result["levels"]["tolerance"] is True
+    assert 0 < result["max_abs_diff"] < 1e-5      # float32 rounds the 1e-6 offset
+
+
+def test_reproduction_tolerance_too_tight_still_differs(platform_env, fake_redis, monkeypatch):
+    result = _run_and_reproduce(fake_redis, monkeypatch, offset="1e-6", atol=1e-9)
+    assert result["verdict"] == "differs"
+
+
+def test_reproduction_records_environment_with_native_libs(platform_env):
+    record = run_experiment(_submit("toy_tiff"))
+    native = record.metrics["environment"]["native"]
+    assert set(native) == {"gdal", "geos", "proj"}
+    assert "peak_rss_mb" in record.metrics or sys.platform == "win32"
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -236,7 +260,7 @@ def test_dissmodel_requirement_is_checked(platform_env):
     assert not any("requires dissmodel" in line for line in record.logs)
 
     path = platform_env["configs"] / "models" / "toy_spec_fields.toml"
-    path.write_text(path.read_text().replace(">=0.6.0,<0.7.0", ">=9"))
+    path.write_text(path.read_text().replace(">=0.6.0,<0.8.0", ">=9"))
     record = _submit("toy_spec_fields")
     assert any("requires dissmodel >=9" in line for line in record.logs)
 

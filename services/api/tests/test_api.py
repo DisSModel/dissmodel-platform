@@ -97,3 +97,28 @@ def test_inline_invalid_toml_is_400(api):
     r = client.post("/submit_job_inline", json={"model_spec_toml": "[model", "input_dataset": "x"})
     assert r.status_code == 400
     assert "Invalid TOML" in r.json()["detail"]
+
+
+# dissmodel-platform 0.2.0: GET /job/{id} carries the provenance the QGIS plugin reads.
+def test_job_response_carries_provenance(api):
+    client, _, main = api
+    exp = _submit(client)
+    job = client.get(f"/job/{exp}").json()
+    from worker.runner import _code_version
+    assert job["code_version"] == _code_version()
+    assert job["model_commit"]
+    assert job["resolved_spec"]["model"]["class"] == "toy"
+    assert job["parameters"]["k"] == 2
+
+
+def test_reproduce_accepts_declared_tolerance(api):
+    client, _, main = api
+    exp = _submit(client)
+    original = main._load_record(exp)
+    original.status = "completed"
+    main._store_record(original)
+
+    new_id = client.post(f"/experiments/{exp}/reproduce?atol=1e-9").json()["experiment_id"]
+    assert client.get(f"/experiments/{new_id}").json()["metrics"]["reproduction_atol"] == 1e-9
+    plain_id = client.post(f"/experiments/{exp}/reproduce").json()["experiment_id"]
+    assert "reproduction_atol" not in client.get(f"/experiments/{plain_id}").json()["metrics"]

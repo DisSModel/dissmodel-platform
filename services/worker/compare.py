@@ -1,43 +1,24 @@
 # services/worker/compare.py
 """
-Compare the output of a reproduction with the output of the original run.
+Output comparison for reproductions.
 
-Two levels, as in the Open LUCC workflow:
-
-- ``file_identical``: the checksums the executors stored in
-  ``artifacts['output']`` are equal. This is the strongest claim, but it
-  can fail with identical data, because GeoTIFF compression and headers
-  depend on the GDAL build (the case seen on macOS ARM).
-- ``values_identical``: for GeoTIFF outputs, a SHA-256 over the decoded
-  bands (shape, dtype and raw array bytes) is equal. This is the check
-  that holds across machines. ``None`` when it could not be computed
-  (not a GeoTIFF, rasterio missing, or an output that cannot be read).
-
-Neither level is a tolerance: values either match bit for bit or not.
+The comparison itself (bytes, decoded values, declared tolerance) lives in
+``dissmodel.executor.compare`` since dissmodel 0.7.0, so the platform, the
+``dissmodel compare`` command and the notebooks give the same verdict. The
+only platform-specific part kept here is turning an ``s3://`` URI into a
+local file.
 """
 from __future__ import annotations
 
-import hashlib
 import os
-import tempfile
 
+from dissmodel.executor.compare import (  # noqa: F401  (re-exported)
+    OK_VERDICTS,
+    decoded_values_sha256,
+    summary,
+)
+from dissmodel.executor.compare import compare_outputs as _compare_outputs
 from dissmodel.executor.schemas import ExperimentRecord
-
-GEOTIFF_SUFFIXES = (".tif", ".tiff")
-
-
-def decoded_values_sha256(path: str) -> str:
-    """SHA-256 over every band of a raster: shape, dtype and values."""
-    import rasterio
-
-    h = hashlib.sha256()
-    with rasterio.open(path) as src:
-        h.update(f"{src.count}x{src.height}x{src.width}".encode())
-        for band in range(1, src.count + 1):
-            data = src.read(band)
-            h.update(str(data.dtype).encode())
-            h.update(data.tobytes())
-    return h.hexdigest()
 
 
 def _local_copy(uri: str, workdir: str) -> str:
@@ -50,38 +31,10 @@ def _local_copy(uri: str, workdir: str) -> str:
     return download_to_file(uri, dest)
 
 
-def compare_outputs(original: ExperimentRecord, reproduction: ExperimentRecord) -> dict:
+def compare_outputs(
+    original: ExperimentRecord,
+    reproduction: ExperimentRecord,
+    atol: float | None = None,
+) -> dict:
     """Result stored in ``reproduction.metrics['reproduction']``."""
-    result: dict = {
-        "of":               original.experiment_id,
-        "original_output":  original.output_path,
-        "file_identical":   None,
-        "values_identical": None,
-    }
-
-    a = original.artifacts.get("output")
-    b = reproduction.artifacts.get("output")
-    if a and b:
-        result["file_identical"] = a == b
-
-    paths = (original.output_path or "", reproduction.output_path or "")
-    if all(p.lower().endswith(GEOTIFF_SUFFIXES) for p in paths):
-        try:
-            with tempfile.TemporaryDirectory() as workdir:
-                hashes = [decoded_values_sha256(_local_copy(p, workdir)) for p in paths]
-            result["values_identical"] = hashes[0] == hashes[1]
-            result["values_sha256"] = hashes[1]
-        except Exception as exc:  # noqa: BLE001 — the comparison is reported, never fatal
-            result["values_error"] = str(exc)
-
-    return result
-
-
-def summary(result: dict) -> str:
-    def word(v):
-        return {True: "identical", False: "DIFFERS", None: "not checked"}[v]
-
-    return (
-        f"Reproduction of {result['of']}: file {word(result['file_identical'])}, "
-        f"decoded values {word(result['values_identical'])}"
-    )
+    return _compare_outputs(original, reproduction, atol, local_copy=_local_copy)

@@ -9,18 +9,11 @@ prints goes to stderr; stdout carries only the final record.
 from __future__ import annotations
 
 import importlib
-import importlib.metadata
 import os
 import pkgutil
-import platform
 import posixpath
 import sys
 from pathlib import Path
-
-# Distributions whose versions are recorded with every run, besides the
-# one that provides the executor.
-RECORDED_DISTRIBUTIONS = ("dissmodel", "disscube", "disslucc", "numpy", "rasterio")
-
 
 def artifact_dir(output_path: str | None) -> str:
     """
@@ -65,34 +58,6 @@ def profiling_report(name: str, record, timings: dict[str, float]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _distribution_of(executor_cls) -> str | None:
-    """Name of the installed distribution that provides the executor's module, if any."""
-    top = executor_cls.__module__.split(".", 1)[0]
-    dists = importlib.metadata.packages_distributions().get(top, [])
-    return dists[0] if dists else None
-
-
-def environment(executor_cls) -> dict:
-    """Versions of Python and of the packages that took part in the run."""
-    names = list(RECORDED_DISTRIBUTIONS)
-    dist = _distribution_of(executor_cls)
-    if dist and dist not in names:
-        names.append(dist)
-
-    versions = {}
-    for name in names:
-        try:
-            versions[name] = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            continue
-    return {
-        "python":            platform.python_version(),
-        "executor":          f"{executor_cls.__module__}.{executor_cls.__qualname__}",
-        "executor_package":  dist,
-        "packages":          versions,
-    }
-
-
 def import_executor_module(name: str) -> None:
     """
     Import ``model.executor_module`` so its executors register themselves.
@@ -134,7 +99,7 @@ def main(record_path: str) -> None:
     executor     = executor_cls()
 
     try:
-        record.metrics["environment"] = environment(executor_cls)
+        # metrics["environment"] and peak_rss_mb are recorded by execute_lifecycle (dissmodel>=0.7).
         record, timings = execute_lifecycle(executor, record)
 
         base_dir      = artifact_dir(record.output_path)

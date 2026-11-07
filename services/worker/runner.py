@@ -28,6 +28,8 @@ DEFAULT_OUTPUT_ROOT = "s3://dissmodel-outputs/experiments"
 
 # Key in record.metrics that links a reproduction to the experiment it repeats.
 REPRODUCES_KEY = "reproduces"
+# Absolute tolerance declared for a reproduction (enables the "equivalent" verdict).
+REPRODUCTION_ATOL_KEY = "reproduction_atol"
 
 
 # ── Provenance helpers ────────────────────────────────────────────────────────
@@ -224,7 +226,7 @@ def build_record_inline(req: InlineJobRequest) -> ExperimentRecord:
     return record
 
 
-def build_reproduction(original: ExperimentRecord) -> ExperimentRecord:
+def build_reproduction(original: ExperimentRecord, atol: float | None = None) -> ExperimentRecord:
     """
     New record that repeats ``original`` from its stored snapshot.
 
@@ -250,6 +252,8 @@ def build_reproduction(original: ExperimentRecord) -> ExperimentRecord:
     )
     record.output_path = default_output_path(record)
     record.metrics[REPRODUCES_KEY] = original.experiment_id
+    if atol is not None:
+        record.metrics[REPRODUCTION_ATOL_KEY] = atol
     record.add_log(f"Reproducing experiment={original.experiment_id}")
     if record.code_version != original.code_version:
         record.add_log(

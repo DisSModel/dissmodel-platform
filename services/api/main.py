@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title       = "DisSModel Platform API",
     description = "Submission, tracking and reproduction of LUCC simulations",
-    version     = "0.1.0",
+    version     = "0.2.0",
     lifespan    = lifespan,
 )
 
@@ -99,6 +99,10 @@ def _to_response(record: ExperimentRecord) -> JobResponse:
         output_path   = record.output_path,
         output_sha256 = record.output_sha256,
         input_sha256  = record.source.checksum or None,
+        code_version  = record.code_version or None,
+        model_commit  = record.model_commit or None,
+        resolved_spec = record.resolved_spec or None,
+        parameters    = record.parameters or None,
         logs          = record.logs,
     )
 
@@ -124,7 +128,7 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    return {"service": "DisSModel Platform API", "version": "0.1.0", "docs": "/docs"}
+    return {"service": "DisSModel Platform API", "version": "0.2.0", "docs": "/docs"}
 
 
 # ── Models registry ───────────────────────────────────────────────────────────
@@ -212,7 +216,7 @@ async def cancel_job(experiment_id: str):
 # ── Reproduce & publish ───────────────────────────────────────────────────────
 
 @app.post("/experiments/{experiment_id}/reproduce", response_model=JobResponse, dependencies=AUTH)
-async def reproduce(experiment_id: str):
+async def reproduce(experiment_id: str, atol: float | None = None):
     """
     Re-run an experiment from its stored snapshot.
 
@@ -220,10 +224,12 @@ async def reproduce(experiment_id: str):
     of the current registry state — and records the dissmodel version
     installed now. When the run ends, the worker compares its output with
     the original and stores the result in ``metrics['reproduction']``
-    (see GET /experiments/{id}).
+    (see GET /experiments/{id}). The verdict is ``identical``,
+    ``values_identical``, ``equivalent`` or ``differs``; ``equivalent`` only
+    exists when the caller declares an absolute tolerance with ``?atol=``.
     """
     original   = _load_record(experiment_id)
-    new_record = build_reproduction(original)
+    new_record = build_reproduction(original, atol=atol)
     _enqueue(new_record)
     return _to_response(new_record)
 

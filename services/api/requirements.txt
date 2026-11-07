@@ -1,5 +1,5 @@
 # DisSModel — same version as the worker (records are built here).
-dissmodel==0.6.6
+dissmodel==0.7.0
 
 # Web framework
 fastapi>=0.100.0,<0.110.0

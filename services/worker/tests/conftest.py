@@ -68,7 +68,7 @@ name = "toy_spec_fields"
 class = "toy_bytes"
 executor_module = "worker.tests.toy_executors"
 description = "spec fields at the model level"
-dissmodel = ">=0.6.0,<0.7.0"
+dissmodel = ">=0.6.0,<0.8.0"
 output_suffix = ".bin"
 land_use_types = ["f", "d", "outros"]
 resolution = 5000.0

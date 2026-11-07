@@ -13,7 +13,7 @@ name             = "lucc_continuous"
 class            = "lucc_continuous"       # ExecutorRegistry key = the executor's `name`
 executor_module  = "disslucc.executors"    # imported so that the executor registers itself
 description      = "LUCC continuous simulation (CLUE-like, linear regression potential)"
-dissmodel        = ">=0.6.0,<0.7.0"        # dissmodel versions the model was written for
+dissmodel        = ">=0.6.0,<0.8.0"        # dissmodel versions the model was written for
 # package        = "disslucc==0.5.0"       # installed before the run, if not in the image
 
 # Model fields: passed to the executor

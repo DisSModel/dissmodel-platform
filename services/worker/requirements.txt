@@ -1,6 +1,6 @@
 # DisSModel ecosystem — exact versions, so every record says which code ran.
 # Change them together and note the change in CHANGELOG.md.
-dissmodel==0.6.6
+dissmodel==0.7.0
 disslucc==0.5.0        # LUCC executors: lucc_continuous, lucc_discrete, lucc_continuous_saturation
 
 # Queue and storage

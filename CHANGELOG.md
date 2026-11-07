@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — unreleased
+
+### Changed
+- Requires `dissmodel==0.7.0`. Environment recording and output comparison
+  now come from the core (`dissmodel.executor.environment`,
+  `dissmodel.executor.compare`); `services/worker/compare.py` only turns
+  `s3://` URIs into local files. `metrics["environment"]` now includes
+  GDAL/GEOS/PROJ and the machine architecture, and `metrics["peak_rss_mb"]`.
+- `metrics["reproduction"]` has a `verdict` (`identical`, `values_identical`,
+  `equivalent`, `differs`, `unverified`) and `levels` (bytes, values,
+  georeference, tolerance); `file_identical` and
+  `values_identical` are kept.
+- Model specs that declare `dissmodel = ">=0.6.0,<0.7.0"` no longer accept
+  the installed version: widen them (the examples and docs now say `<0.8.0`).
+
+### Added
+- `POST /experiments/{id}/reproduce?atol=` declares an absolute tolerance;
+  without it the verdict is never `equivalent`.
+- `GET /job/{id}` and `POST /submit_job` return `code_version`,
+  `model_commit`, `resolved_spec` and `parameters` (needs the 0.7.0
+  `JobResponse`).
+
 Brings the platform in line with DisSModel 0.6.6, DisSCube 0.6.0 and DisSLUCC 0.5.0.
 
 ### Fixed

@@ -10,7 +10,7 @@ import redis
 from dissmodel.executor.schemas import ExperimentRecord
 
 from worker.compare import compare_outputs, summary
-from worker.runner import REPRODUCES_KEY, run_experiment
+from worker.runner import REPRODUCES_KEY, REPRODUCTION_ATOL_KEY, run_experiment
 from worker.storage import ensure_buckets
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ def _compare_with_original(record: ExperimentRecord) -> None:
     except ValueError as exc:
         record.add_log(f"Warning: cannot compare with the original: {exc}")
         return
-    result = compare_outputs(original, record)
+    result = compare_outputs(original, record, record.metrics.get(REPRODUCTION_ATOL_KEY))
     record.metrics["reproduction"] = result
     record.add_log(summary(result))
 
